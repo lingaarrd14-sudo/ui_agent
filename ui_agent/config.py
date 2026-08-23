@@ -1,3 +1,5 @@
+"""환경변수에서 UI 에이전트 실행 설정을 읽는다."""
+
 import os
 from dataclasses import dataclass
 
@@ -6,6 +8,8 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class Settings:
+    """한 번의 에이전트 실행에 사용하는 변경 불가능한 설정 모음."""
+
     api_key: str | None
     base_url: str | None
     model: str
@@ -18,13 +22,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        """프로젝트의 `.env`와 현재 프로세스 환경에서 설정을 생성한다."""
         load_dotenv()
         return cls(
             api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv(
-                "OPENAI_BASE_URL",
-                "https://factchat-cloud.mindlogic.ai/v1/gateway",
-            ),
+            base_url=os.getenv("BASE_URL"),
             model=os.getenv("MODEL", "gpt-5.6-terra"),
             task=os.getenv(
                 "TASK",

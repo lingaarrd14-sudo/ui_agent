@@ -1,3 +1,5 @@
+"""외부 API 호출 없이 UI 에이전트의 핵심 제어 흐름을 검증한다."""
+
 import json
 import unittest
 
