@@ -30,7 +30,7 @@ class PlaywrightExecutor:
         page = self.session.current_page()
         try:
             if isinstance(action, ClickAction):
-                if action.x > self.width or action.y > self.height:
+                if action.x >= self.width or action.y >= self.height:
                     raise ValueError(f"잘못된 클릭 좌표: ({action.x}, {action.y})")
                 page.mouse.click(action.x, action.y)
             elif isinstance(action, TypeAction):

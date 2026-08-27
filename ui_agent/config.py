@@ -26,13 +26,15 @@ class Settings:
         load_dotenv()
         return cls(
             api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("BASE_URL"),
+            base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("BASE_URL"),
             model=os.getenv("MODEL", "gpt-5.6-terra"),
             task=os.getenv(
                 "TASK",
-                "NAVER 뉴스로 이동해서 트럼프 관련 경제 뉴스 하나를 클릭하세요",
+                "경제 뉴스 좀 찾아줘",
             ),
-            start_url=os.getenv("START_URL", "https://www.naver.com"),
+            start_url=os.getenv("START_URL", "http://localhost:9999/"),
             target_domain=os.getenv("TARGET_DOMAIN"),
             max_steps=int(os.getenv("MAX_STEPS", "15")),
+            viewport_width=int(os.getenv("VIEWPORT_WIDTH", "1280")),
+            viewport_height=int(os.getenv("VIEWPORT_HEIGHT", "720")),
         )
