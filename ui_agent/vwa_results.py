@@ -78,7 +78,6 @@ def git_metadata(path: Path) -> dict[str, Any]:
 def source_digest(project_root: Path) -> str:
     """Fingerprint exact runtime sources, including uncommitted work."""
     sources = [
-        project_root / "agent.py",
         project_root / "vwa_benchmark.py",
         project_root / "requirements.txt",
         *(project_root / "ui_agent").glob("*.py"),

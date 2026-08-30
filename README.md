@@ -24,18 +24,18 @@ image만 별도의 원본 이미지로 전달합니다.
 
 | 경로 | 역할 |
 | --- | --- |
+| `agent.py` | 단독 실행 설정과 컴포넌트 조립 |
 | `ui_agent/models.py` | 관찰, 구조화 액션, 실행 결과 계약 |
-| `ui_agent/state.py` | 시각 상태 축소 및 변화 판정 |
-| `ui_agent/controller.py` | 공통 제어 흐름, 제안 검증, 반복·순환 차단 |
+| `ui_agent/controller.py` | 시각 상태 비교, 제안 검증, 반복·순환 차단 |
 | `ui_agent/policy.py` | OpenAI Responses API vision 정책 |
-| `ui_agent/perception.py` | Playwright 원시 스크린샷 수집 |
-| `ui_agent/executor.py` | 단독 실행용 Playwright 액션 실행 |
+| `ui_agent/playwright_runtime.py` | Playwright 페이지 관리, 화면 관찰, 액션 실행 |
 | `ui_agent/runner.py` | 단독 실행 루프 |
 | `ui_agent/vwa_adapter.py` | 공통 액션과 VWA 저수준 액션 사이의 얇은 변환 계층 |
 | `ui_agent/vwa_config.py` | VWA 환경변수, 원본 task 변환과 사전 검증 |
 | `ui_agent/vwa_runtime.py` | VWA import, 인증, 액션 factory, 평가 captioner 경계 |
+| `ui_agent/vwa_tasks.py` | task 실행, 공식 평가, task별 결과 저장 |
 | `ui_agent/vwa_results.py` | 재현 가능한 run identity와 append-only 결과 관리 |
-| `vwa_benchmark.py` | VWA task/auth/browser/공식 평가 조립과 결과 저장 |
+| `vwa_benchmark.py` | CLI 설정과 VWA task/auth/browser 컴포넌트 조립 |
 | `summarize_benchmark.py` | 재시도 결과를 중복 제거한 요약 출력 |
 
 `vwa_benchmark.py`는 VisualWebArena의 `browser_env`, `auto_login`, 공식

@@ -84,6 +84,24 @@ def replace_placeholders(value: Any) -> Any:
     return value
 
 
+def _image_paths(image_spec: str | list[str] | None) -> list[str]:
+    """VWA의 단일/복수 reference image 표현을 순회 가능한 목록으로 맞춘다."""
+    if not image_spec:
+        return []
+    return [image_spec] if isinstance(image_spec, str) else image_spec
+
+
+def _resolve_image_spec(image_spec: str | list[str]) -> str | list[str]:
+    """로컬 reference image 경로만 VWA checkout 기준 절대 경로로 바꾼다."""
+    resolved = [
+        value
+        if value.startswith(("http://", "https://"))
+        else str((VWA_ROOT / value).resolve())
+        for value in _image_paths(image_spec)
+    ]
+    return resolved[0] if isinstance(image_spec, str) else resolved
+
+
 def generate_configs(result_dir: Path, domains: Sequence[str]) -> dict[str, list[Path]]:
     """Materialize executable configs outside the VWA checkout."""
     generated: dict[str, list[Path]] = {}
@@ -96,14 +114,7 @@ def generate_configs(result_dir: Path, domains: Sequence[str]) -> dict[str, list
         for task in tasks:
             image_spec = task.get("image")
             if image_spec:
-                values = [image_spec] if isinstance(image_spec, str) else image_spec
-                resolved = [
-                    value
-                    if value.startswith(("http://", "https://"))
-                    else str((VWA_ROOT / value).resolve())
-                    for value in values
-                ]
-                task["image"] = resolved[0] if isinstance(image_spec, str) else resolved
+                task["image"] = _resolve_image_spec(image_spec)
             path = output_dir / f"{task['task_id']}.json"
             path.write_text(
                 json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -141,10 +152,7 @@ def validate_selection(selected: Sequence[tuple[str, Path]]) -> dict[str, int]:
             raise ValueError(f"{domain}/{path.name}: unsupported eval types {unsupported}")
         if task.get("require_reset"):
             counts["requires_reset"] += 1
-        image_spec = task.get("image")
-        image_paths = [] if not image_spec else (
-            [image_spec] if isinstance(image_spec, str) else image_spec
-        )
+        image_paths = _image_paths(task.get("image"))
         counts["reference_images"] += len(image_paths)
         for image_path in image_paths:
             if not image_path.startswith(("http://", "https://")) and not Path(
@@ -156,11 +164,8 @@ def validate_selection(selected: Sequence[tuple[str, Path]]) -> dict[str, int]:
 
 def load_reference_images(image_spec: str | list[str] | None) -> list[Image.Image]:
     """Load task-supplied reference images without generating captions."""
-    if not image_spec:
-        return []
-    paths = [image_spec] if isinstance(image_spec, str) else image_spec
     images: list[Image.Image] = []
-    for path in paths:
+    for path in _image_paths(image_spec):
         if path.startswith(("http://", "https://")):
             response = requests.get(path, timeout=30)
             response.raise_for_status()

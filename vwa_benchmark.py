@@ -9,19 +9,14 @@ receives SoM marks, accessibility-tree text, or generated captions.
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import time
-import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
 
-from ui_agent.models import DoneAction, ExecutionResult
 from ui_agent.policy import INSTRUCTIONS, OpenAIVisionPolicy
-from ui_agent.vwa_adapter import VisualWebArenaAdapter, pil_to_base64
 from ui_agent.vwa_config import (
     DOMAIN_SOURCES,
     UI_ROOT,
@@ -29,26 +24,23 @@ from ui_agent.vwa_config import (
     configure_environment,
     generate_configs,
     load_local_environment,
-    load_reference_images,
     site_urls,
     task_selection,
     validate_selection,
 )
 from ui_agent.vwa_results import (
-    append_jsonl,
     git_metadata,
     persist_run_config,
-    read_latest_results,
     source_digest,
     write_summary,
 )
 from ui_agent.vwa_runtime import (
     BrowserEnvActionFactory,
     EvaluationCaptioner,
-    VWABindings,
     ensure_auth,
     load_vwa_bindings,
 )
+from ui_agent.vwa_tasks import run_selected_tasks
 
 
 VWA_INSTRUCTIONS = INSTRUCTIONS + """
@@ -133,109 +125,6 @@ def build_run_metadata(
     }
 
 
-def write_runtime_config(
-    result_dir: Path, domain: str, task: dict[str, Any]
-) -> Path:
-    """Add run-local auth state to one generated task config."""
-    task["storage_state"] = str(
-        (result_dir / "auth" / f"{domain}_state.json").resolve()
-    )
-    runtime_dir = result_dir / "runtime_configs" / domain
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_config = runtime_dir / f"{task['task_id']}.json"
-    runtime_config.write_text(
-        json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return runtime_config
-
-
-def execute_task(
-    *,
-    args: argparse.Namespace,
-    bindings: VWABindings,
-    policy: OpenAIVisionPolicy,
-    action_factory: BrowserEnvActionFactory,
-    captioner: EvaluationCaptioner,
-    env: Any,
-    result_dir: Path,
-    domain: str,
-    task: dict[str, Any],
-    runtime_config: Path,
-) -> dict[str, Any]:
-    """Execute and officially score exactly one task."""
-    reference_pil = load_reference_images(task.get("image"))
-    reference_images = [pil_to_base64(image) for image in reference_pil]
-    observation, info = env.reset(options={"config_file": str(runtime_config)})
-    state: dict[str, Any] = {"observation": observation, "info": info}
-    trajectory: list[Any] = [state]
-    adapter = VisualWebArenaAdapter(
-        policy=policy,
-        action_factory=action_factory,
-        viewport_width=args.viewport_width,
-        viewport_height=args.viewport_height,
-        max_proposals=args.max_proposals,
-    )
-    step_records: list[dict[str, Any]] = []
-    model_calls = 0
-
-    for step in range(1, args.max_steps + 1):
-        decision, before, action = adapter.decide(
-            task["intent"], state, reference_images
-        )
-        audit = {
-            "step": step,
-            "decision": decision.model_dump(mode="json"),
-            "rejected_proposals": adapter.controller.last_rejections.copy(),
-            "model_calls": adapter.controller.last_proposal_count,
-        }
-        model_calls += adapter.controller.last_proposal_count
-        step_records.append(audit)
-        trajectory.append(action)
-        print(f"  step {step}: {decision.action.model_dump(mode='json')}", flush=True)
-
-        if isinstance(decision.action, DoneAction):
-            audit["executed"] = False
-            break
-
-        observation, _, terminated, truncated, info = env.step(action)
-        after_state = {"observation": observation, "info": info}
-        execution = ExecutionResult(
-            ok=not bool(info.get("fail_error")),
-            message=info.get("fail_error", ""),
-        )
-        history_record = adapter.record(before, decision, execution, after_state)
-        audit.update(
-            {
-                "executed": True,
-                "result": history_record.result.model_dump(mode="json"),
-            }
-        )
-        state = after_state
-        trajectory.append(state)
-        if terminated or truncated:
-            trajectory.append(bindings.create_stop_action("Environment terminated"))
-            break
-    else:
-        trajectory.append(bindings.create_stop_action("Maximum steps reached"))
-
-    eval_types = task["eval"]["eval_types"]
-    caption_fn = captioner.get() if "page_image_query" in eval_types else None
-    evaluator = bindings.evaluator_router(runtime_config, captioning_fn=caption_fn)
-    score = float(evaluator(trajectory, runtime_config, env.page))
-    if args.save_traces:
-        trace_dir = result_dir / "traces" / domain
-        trace_dir.mkdir(parents=True, exist_ok=True)
-        env.save_trace(trace_dir / f"{task['task_id']}.zip")
-    return {
-        "score": score,
-        "steps": len(step_records),
-        "model_calls": model_calls,
-        "status": "pass" if score == 1.0 else "fail",
-        "step_records": step_records,
-        "final_url": env.page.url,
-    }
-
-
 def run() -> int:
     load_local_environment()  # MODEL must be available before parse_args.
     args = parse_args()
@@ -293,63 +182,18 @@ def run() -> int:
     )
 
     results_path = result_dir / "results.jsonl"
-    completed = {
-        key
-        for key, record in read_latest_results(results_path).items()
-        if record.get("score") is not None
-    }
     total_planned = len(selected)
     try:
-        for position, (domain, config_path) in enumerate(selected, start=1):
-            task = json.loads(config_path.read_text(encoding="utf-8"))
-            task_id = int(task["task_id"])
-            if (domain, task_id) in completed:
-                print(f"[{position}/{total_planned}] skip {domain}/{task_id}", flush=True)
-                continue
-
-            runtime_config = write_runtime_config(result_dir, domain, task)
-            started = time.monotonic()
-            record: dict[str, Any] = {
-                "domain": domain,
-                "task_id": task_id,
-                "intent": task["intent"],
-                "score": None,
-                "steps": 0,
-                "model_calls": 0,
-                "status": "error",
-            }
-            print(
-                f"[{position}/{total_planned}] {domain}/{task_id}: {task['intent']}",
-                flush=True,
-            )
-            try:
-                record.update(
-                    execute_task(
-                        args=args,
-                        bindings=bindings,
-                        policy=policy,
-                        action_factory=action_factory,
-                        captioner=captioner,
-                        env=env,
-                        result_dir=result_dir,
-                        domain=domain,
-                        task=task,
-                        runtime_config=runtime_config,
-                    )
-                )
-            except Exception as error:
-                record["error"] = repr(error)
-                record["traceback"] = traceback.format_exc()
-                print(f"  ERROR: {error!r}", flush=True)
-
-            record["elapsed_seconds"] = round(time.monotonic() - started, 3)
-            append_jsonl(results_path, record)
-            write_summary(result_dir, results_path, total_planned)
-            print(
-                f"  => {record['status']} score={record['score']} "
-                f"elapsed={record['elapsed_seconds']}s",
-                flush=True,
-            )
+        run_selected_tasks(
+            options=args,
+            bindings=bindings,
+            policy=policy,
+            action_factory=action_factory,
+            captioner=captioner,
+            env=env,
+            result_dir=result_dir,
+            selected=selected,
+        )
     finally:
         env.close()
 

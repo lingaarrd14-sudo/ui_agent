@@ -1,11 +1,5 @@
 
-# Playwright
+# Python/runtime artifacts
 __pycache__/
-node_modules/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-/playwright/.auth/
 .env
 benchmark_results/

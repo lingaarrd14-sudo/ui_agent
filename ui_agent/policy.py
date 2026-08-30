@@ -43,9 +43,32 @@ class OpenAIVisionPolicy:
         feedback: Sequence[str] = (),
     ) -> Decision:
         """현재 관찰과 최근 이력으로 다음 실행 결정을 생성한다."""
+        content = self._build_content(
+            task, observation, history, reference_images, feedback
+        )
+        response = self.client.responses.parse(
+            model=self.model,
+            instructions=self.instructions,
+            input=[{"role": "user", "content": content}],
+            # 자유 형식 텍스트 대신 Decision 스키마를 강제한다.
+            text_format=Decision,
+        )
+        if response.output_parsed is None:
+            # 파싱 실패 상태를 실행 가능한 액션으로 취급하지 않는다.
+            raise RuntimeError("모델이 유효한 액션을 반환하지 않았습니다.")
+        return response.output_parsed
+
+    @staticmethod
+    def _build_prompt(
+        task: str,
+        observation: Observation,
+        history: Sequence[StepRecord],
+        feedback: Sequence[str],
+    ) -> str:
+        """판단에 필요한 텍스트만 직렬화한다."""
         # 전체 기록 대신 최근 단계만 보내 요청 크기와 모델의 혼선을 줄인다.
         recent = [step.model_dump(mode="json") for step in history[-5:]]
-        prompt = (
+        return (
             f"Goal: {task}\n"
             f"Current URL: {observation.url}\n"
             f"Viewport: {observation.viewport_width}x{observation.viewport_height}\n"
@@ -53,15 +76,25 @@ class OpenAIVisionPolicy:
             f"Rejected proposals in this step: "
             f"{json.dumps(list(feedback), ensure_ascii=False)}"
         )
-        # text_format을 지정해 자유 형식 텍스트가 아닌 Decision 스키마를 강제한다.
+
+    @classmethod
+    def _build_content(
+        cls,
+        task: str,
+        observation: Observation,
+        history: Sequence[StepRecord],
+        reference_images: Sequence[str],
+        feedback: Sequence[str],
+    ) -> list[dict[str, str]]:
+        """현재 화면과 선택적 reference image를 API content로 조립한다."""
         content = [
-            {"type": "input_text", "text": prompt},
+            {
+                "type": "input_text",
+                "text": cls._build_prompt(task, observation, history, feedback),
+            },
             {
                 "type": "input_image",
-                "image_url": (
-                    "data:image/png;base64,"
-                    f"{observation.screenshot_base64}"
-                ),
+                "image_url": f"data:image/png;base64,{observation.screenshot_base64}",
                 "detail": "high",
             },
         ]
@@ -83,19 +116,4 @@ class OpenAIVisionPolicy:
                 }
                 for image in reference_images
             )
-
-        response = self.client.responses.parse(
-            model=self.model,
-            instructions=self.instructions,
-            input=[
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
-            text_format=Decision,
-        )
-        if response.output_parsed is None:
-            # 파싱 실패 상태를 실행 가능한 액션으로 취급하지 않는다.
-            raise RuntimeError("모델이 유효한 액션을 반환하지 않았습니다.")
-        return response.output_parsed
+        return content

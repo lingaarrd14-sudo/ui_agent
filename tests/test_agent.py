@@ -8,8 +8,7 @@ import unittest
 from PIL import Image
 from pydantic import ValidationError
 
-from ui_agent.browser import BrowserSession
-from ui_agent.controller import VisionAgentController
+from ui_agent.controller import VisionAgentController, VisualState
 from ui_agent.models import (
     ClickAction,
     Decision,
@@ -18,8 +17,8 @@ from ui_agent.models import (
     Observation,
 )
 from ui_agent.runner import AgentRunner, DomainEvaluator
-from ui_agent.state import VisualState
 from ui_agent.policy import OpenAIVisionPolicy
+from ui_agent.playwright_runtime import BrowserSession
 
 
 def screenshot(color: str = "white", changed_pixel: bool = False) -> str:

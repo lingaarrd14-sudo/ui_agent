@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from ui_agent.models import ClickAction, Decision, DoneAction, ExecutionResult
 from ui_agent.vwa_adapter import VisualWebArenaAdapter, decision_to_vwa_action
 from ui_agent.vwa_runtime import BrowserEnvActionFactory
 from ui_agent.vwa_results import persist_run_config, read_latest_results
+from ui_agent.vwa_tasks import run_selected_tasks
 
 
 class FakeActionFactory:
@@ -42,9 +44,34 @@ class FakeVWABindings:
         return {}
 
 
+class FakeTaskBindings:
+    def __init__(self):
+        self.trajectory = None
+
+    @staticmethod
+    def create_stop_action(answer):
+        return {"kind": "stop", "answer": answer}
+
+    def evaluator_router(self, runtime_config, captioning_fn=None):
+        def evaluate(trajectory, evaluated_config, page):
+            self.trajectory = trajectory
+            return 1.0
+
+        return evaluate
+
+
 class FakePage:
     def __init__(self, url="https://example.com"):
         self.url = url
+
+
+class FakeTaskEnvironment:
+    def __init__(self):
+        self.page = FakePage()
+
+    def reset(self, options):
+        current = state()
+        return current["observation"], current["info"]
 
 
 def state(color=255, url="https://example.com", failure=""):
@@ -143,6 +170,49 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
             latest = read_latest_results(path)
 
             self.assertEqual(latest[("reddit", 0)]["score"], 1.0)
+
+    def test_task_runner_persists_official_score_for_done_action(self):
+        decision = Decision(
+            action=DoneAction(kind="done", status="success", summary="answer"),
+            expected_outcome="Return the answer",
+        )
+        options = SimpleNamespace(
+            max_steps=2,
+            max_proposals=3,
+            viewport_width=30,
+            viewport_height=20,
+            save_traces=False,
+        )
+        bindings = FakeTaskBindings()
+
+        with tempfile.TemporaryDirectory() as directory:
+            result_dir = Path(directory)
+            config_path = result_dir / "task.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "task_id": 7,
+                        "intent": "return answer",
+                        "eval": {"eval_types": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run_selected_tasks(
+                options=options,
+                bindings=bindings,
+                policy=OneDecisionPolicy(decision),
+                action_factory=FakeActionFactory(),
+                captioner=object(),
+                env=FakeTaskEnvironment(),
+                result_dir=result_dir,
+                selected=[("reddit", config_path)],
+            )
+
+            latest = read_latest_results(result_dir / "results.jsonl")
+            self.assertEqual(latest[("reddit", 7)]["score"], 1.0)
+            self.assertEqual(bindings.trajectory[-1]["kind"], "stop")
 
 
 if __name__ == "__main__":
