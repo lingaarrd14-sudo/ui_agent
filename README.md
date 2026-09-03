@@ -49,12 +49,17 @@ image만 별도의 원본 이미지로 전달합니다.
 
 ## 환경 설정
 
-기존 WebArena 가상환경을 사용합니다.
+Python 3.11 가상환경을 프로젝트 안에 별도로 만듭니다. WebArena 가상환경은
+사용하지 않습니다.
 
 ```bash
 cd /home/default/agent/ui_agent
-source ../webarena/.venv/bin/activate
+python3.11 -m venv --prompt ui_agent .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m playwright install chromium
+python -m nltk.downloader punkt punkt_tab
 ```
 
 `ui_agent/.env` 예시:

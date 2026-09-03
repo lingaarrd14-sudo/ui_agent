@@ -1,5 +1,9 @@
 
 # Python/runtime artifacts
 __pycache__/
+.venv/
+.venv-ui-agent/
+.pip-tmp.*/
+.matplotlib/
 .env
 benchmark_results/
