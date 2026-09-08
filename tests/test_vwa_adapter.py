@@ -5,9 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
+from ui_agent import vwa_config
 from ui_agent.models import ClickAction, Decision, DoneAction, ExecutionResult
 from ui_agent.vwa_adapter import VisualWebArenaAdapter, decision_to_vwa_action
 from ui_agent.vwa_runtime import BrowserEnvActionFactory
@@ -92,6 +94,48 @@ class OneDecisionPolicy:
 
 
 class VisualWebArenaPolicyTests(unittest.TestCase):
+    def test_generated_configs_exclude_tasks_with_viewport_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_dir = root / "config_files" / "vwa"
+            source_dir.mkdir(parents=True)
+            source = source_dir / "tasks.json"
+            source.write_text(
+                json.dumps(
+                    [
+                        {
+                            "task_id": 1,
+                            "intent": "exclude",
+                            "start_url": "__SHOPPING__/",
+                            "viewport_size": {"width": 430, "height": 932},
+                            "eval": {"eval_types": []},
+                        },
+                        {
+                            "task_id": 2,
+                            "intent": "keep",
+                            "start_url": "__SHOPPING__/",
+                            "eval": {"eval_types": []},
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(vwa_config, "VWA_ROOT", root),
+                patch.dict(vwa_config.DOMAIN_SOURCES, {"shopping": "tasks.json"}),
+                patch.object(
+                    vwa_config, "site_urls", return_value=vwa_config.SITE_DEFAULTS
+                ),
+            ):
+                generated = vwa_config.generate_configs(
+                    root / "results", ["shopping"]
+                )
+
+            self.assertEqual([path.name for path in generated["shopping"]], ["2.json"])
+            self.assertEqual(json.loads(generated["shopping"][0].read_text())["task_id"], 2)
+            self.assertIn("viewport_size", json.loads(source.read_text())[0])
+
     def test_decision_schema_accepts_benchmark_answer(self):
         decision = Decision(
             action=DoneAction(kind="done", status="success", summary="blue kayak"),

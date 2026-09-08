@@ -19,11 +19,11 @@ WORKSPACE_ROOT = UI_ROOT.parent
 VWA_ROOT = WORKSPACE_ROOT / "visualwebarena"
 
 SITE_DEFAULTS = {
-    "CLASSIFIEDS": "http://127.0.0.1:9980",
-    "SHOPPING": "http://127.0.0.1:7770",
-    "REDDIT": "http://127.0.0.1:9999",
-    "WIKIPEDIA": "http://127.0.0.1:8888",
-    "HOMEPAGE": "http://127.0.0.1:4399",
+    "CLASSIFIEDS": "http://localhost:9980",
+    "SHOPPING": "http://localhost:7770",
+    "REDDIT": "http://localhost:9999",
+    "WIKIPEDIA": "http://localhost:8888",
+    "HOMEPAGE": "http://localhost:4399",
 }
 CLASSIFIEDS_RESET_TOKEN = "4b61655535e7ed388f0d40a93600254c"
 DOMAIN_SOURCES = {
@@ -112,6 +112,10 @@ def generate_configs(result_dir: Path, domains: Sequence[str]) -> dict[str, list
         output_dir.mkdir(parents=True, exist_ok=True)
         paths: list[Path] = []
         for task in tasks:
+            # Viewport-controlled experiments use only tasks that do not
+            # prescribe their own browser dimensions.
+            if domain == "shopping" and "viewport_size" in task:
+                continue
             image_spec = task.get("image")
             if image_spec:
                 task["image"] = _resolve_image_spec(image_spec)
