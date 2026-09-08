@@ -69,14 +69,9 @@ def main() -> int:
         for step in row.get("step_records", [])
     )
     actions.pop(None, None)
-    rejected = sum(
-        len(step.get("rejected_proposals", []))
-        for row in rows
-        for step in row.get("step_records", [])
-    )
     model_calls = sum(int(row.get("model_calls", 0)) for row in rows)
     print(f"actions: {dict(actions)}")
-    print(f"model calls: {model_calls}  rejected proposals: {rejected}")
+    print(f"model calls: {model_calls}")
     print("recent failures:")
     for row in rows[-5:]:
         if row.get("score") != 1.0:

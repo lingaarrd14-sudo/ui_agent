@@ -8,15 +8,16 @@ image만 별도의 원본 이미지로 전달합니다.
 ## 신뢰성 경계
 
 실행 흐름은 VisualWebArena의 `observe → decide → act → observe → evaluate` 구조를
-따르되, 액션 결정과 안전 검증은 `ui_agent`가 소유합니다.
+따르되, 액션 결정과 유효성 검증은 `ui_agent`가 소유합니다.
 
 - 모델은 Pydantic 스키마에 맞는 액션 하나만 반환합니다.
 - 클릭은 현재 뷰포트 안의 좌표만 허용합니다.
-- 실행 전후 화면을 축소 비교해 렌더링 잡음과 실제 변화를 구분합니다.
-- 변화가 없었던 동일 액션, 12px 이내로 좌표만 바꾼 재클릭, 이전 화면으로
-  돌아온 뒤의 동일 액션을 실행 전에 거절합니다.
-- 한 단계에서 최대 3번 다른 액션을 요청하고, 계속 같은 제안을 하면 실제로
-  실행하지 않고 `blocked`로 종료합니다. 무한 재시도는 없습니다.
+- 단계당 모델을 한 번 호출하고, 실제 실행 이력에서 동일 액션이 기본 5회 연속
+  나타나면 다음 모델 호출 전에 `blocked`로 종료합니다.
+- 클릭은 정수 좌표, 입력은 텍스트, 키 입력은 키 문자열, 스크롤은 방향으로
+  동일성을 비교합니다. 화면 무변화나 이전 화면 재방문만으로 차단하지 않습니다.
+- 화면 변화는 다음 스크린샷에서 모델이 판단합니다. 별도 픽셀 비교나 순환 추적,
+  거절 피드백을 넣은 재제안 호출은 없습니다. 유효하지 않은 액션은 실행 없이 종료합니다.
 - VisualWebArena 결과의 성공 여부는 모델의 자기 선언이 아니라 공식 evaluator가
   최종 판정합니다.
 
@@ -26,7 +27,7 @@ image만 별도의 원본 이미지로 전달합니다.
 | --- | --- |
 | `agent.py` | 단독 실행 설정과 컴포넌트 조립 |
 | `ui_agent/models.py` | 관찰, 구조화 액션, 실행 결과 계약 |
-| `ui_agent/controller.py` | 시각 상태 비교, 제안 검증, 반복·순환 차단 |
+| `ui_agent/controller.py` | 실행 이력 기반 반복 조기 종료, 액션 유효성 검증 |
 | `ui_agent/policy.py` | OpenAI Responses API vision 정책 |
 | `ui_agent/playwright_runtime.py` | Playwright 페이지 관리, 화면 관찰, 액션 실행 |
 | `ui_agent/runner.py` | 단독 실행 루프 |
@@ -46,6 +47,30 @@ image만 별도의 원본 이미지로 전달합니다.
 
 생성 config, 로그인 state, trace, 점수는 전부 지정한 `result-dir` 아래에 기록되며
 `visualwebarena` checkout에는 쓰지 않습니다.
+
+## 반복 처리 변경 근거
+
+참고한 로컬 VisualWebArena commit은 `f29e2a9273278e02a7e4b9da05987612425766d0`입니다.
+
+- [`run.py:198`](../visualwebarena/run.py#L198)의 `early_stop`은 화면 비교 없이
+  실행된 액션을 검사합니다. 기본 반복 임계치는 5이며, 다음 액션 요청 전에 검사합니다.
+- [`browser_env/actions.py:349`](../visualwebarena/browser_env/actions.py#L349)의
+  `is_equivalent`에 맞춰 스크롤은 방향, 키와 입력은 원문으로 비교합니다.
+  VWA는 정규화된 클릭 좌표에 `np.allclose`를 쓰지만 여기서는 정수 픽셀을 정확히
+  비교합니다. 기존 12px 버킷은 제거했습니다.
+- VWA의 고수준 `TYPE`은 전체 이력에서 같은 대상을 누적하지만, 이 어댑터의
+  `type`은 `KEYBOARD_TYPE`입니다. 따라서 다른 저수준 액션처럼 **연속** 횟수를 셉니다.
+  Structured Outputs 파싱 실패는 기존 오류 경로를 유지하며 VWA의 `NONE` 액션
+  누적 로직은 도입하지 않습니다.
+- [`p_multimodal_cot_id_actree_3s.py`](../visualwebarena/agent/prompts/raw/p_multimodal_cot_id_actree_3s.py)의
+  현재 관찰에 유효한 액션 하나를 선택하고 목표 달성 시 종료하는 규칙을 참고했습니다.
+  프롬프트의 반복 금지를 없애고 스크롤·재시도를 허용하되 진행 여부를 확인하도록 했습니다.
+  실제 저수준 입력 동작에 맞춰 포커스·텍스트 추가·Enter의 역할도 명시했습니다.
+
+반복 임계치는 `--repeating-action-failure-th 5`로 설정하며 run metadata에 저장합니다.
+기존 `--max-proposals` 옵션과 `rejected_proposals`, `state_changed` 로그 필드는 제거했습니다.
+화면이 변해도 같은 행동이 임계치만큼 연속되면 종료하고, 서로 다른 행동의 순환은
+`max-steps`로 제한합니다. 설정과 소스가 달라졌으므로 기존 결과와 별도 디렉터리를 사용하세요.
 
 ## 환경 설정
 

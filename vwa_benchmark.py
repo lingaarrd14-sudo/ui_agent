@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int)
     parser.add_argument("--max-steps", type=int, default=15)
-    parser.add_argument("--max-proposals", type=int, default=3)
+    parser.add_argument("--repeating-action-failure-th", type=int, default=5)
     parser.add_argument("--model", default=os.environ.get("MODEL", "gpt-5.6-terra"))
     parser.add_argument("--viewport-width", type=int, default=1280)
     parser.add_argument("--viewport-height", type=int, default=720)
@@ -89,8 +89,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--end must be greater than or equal to --start")
     if args.max_steps < 1:
         parser.error("--max-steps must be at least 1")
-    if args.max_proposals < 1:
-        parser.error("--max-proposals must be at least 1")
+    if args.repeating_action_failure_th < 1:
+        parser.error("--repeating-action-failure-th must be at least 1")
     if args.viewport_width < 1 or args.viewport_height < 1:
         parser.error("viewport dimensions must be positive")
     return args
@@ -115,7 +115,7 @@ def build_run_metadata(
         "api_base_url": base_url or "OpenAI SDK default",
         "policy_instructions": VWA_INSTRUCTIONS,
         "max_steps": args.max_steps,
-        "max_proposals_per_step": args.max_proposals,
+        "repeating_action_failure_th": args.repeating_action_failure_th,
         "viewport": [args.viewport_width, args.viewport_height],
         "domains": domains,
         "start": args.start,

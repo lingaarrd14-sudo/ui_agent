@@ -86,18 +86,18 @@ class VisualWebArenaAdapter:
         action_factory: VWAActionFactory,
         viewport_width: int,
         viewport_height: int,
-        max_proposals: int = 3,
+        repeating_action_failure_th: int = 5,
     ) -> None:
         self.action_factory = action_factory
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         self.controller = VisionAgentController(
-            policy=policy, max_proposals=max_proposals
+            policy=policy, repeating_action_failure_th=repeating_action_failure_th
         )
 
     @property
-    def history(self) -> list[StepRecord]:
-        return self.controller.history
+    def model_calls(self) -> int:
+        return self.controller.model_calls
 
     def observe(self, state: dict[str, Any]) -> Observation:
         return observation_from_vwa_state(
@@ -122,10 +122,10 @@ class VisualWebArenaAdapter:
         result: ExecutionResult,
         after_state: dict[str, Any],
     ) -> StepRecord:
-        """VWA 실행 뒤 얻은 원시 스크린샷으로 실제 상태 변화를 검증한다."""
+        """VWA 실행 결과와 실행 후 URL을 공통 이력에 기록한다."""
         return self.controller.record(
             before=before,
             decision=decision,
             result=result,
-            after=self.observe(after_state),
+            after_url=after_state["info"]["page"].url,
         )

@@ -8,23 +8,24 @@ import unittest
 from PIL import Image
 from pydantic import ValidationError
 
-from ui_agent.controller import VisionAgentController, VisualState
+from ui_agent.controller import VisionAgentController, is_equivalent
 from ui_agent.models import (
     ClickAction,
     Decision,
     DoneAction,
     ExecutionResult,
     Observation,
+    PressAction,
+    ScrollAction,
+    TypeAction,
 )
 from ui_agent.runner import AgentRunner, DomainEvaluator
 from ui_agent.policy import OpenAIVisionPolicy
 from ui_agent.playwright_runtime import BrowserSession
 
 
-def screenshot(color: str = "white", changed_pixel: bool = False) -> str:
+def screenshot(color: str = "white") -> str:
     image = Image.new("RGB", (64, 64), color)
-    if changed_pixel:
-        image.putpixel((0, 0), (0, 0, 0))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -51,7 +52,7 @@ class FakePerception:
 
 class DonePolicy:
     def decide(
-        self, task, current, history, reference_images=(), feedback=()
+        self, task, current, history, reference_images=()
     ):
         return Decision(
             action=DoneAction(kind="done", status="success", summary="완료"),
@@ -66,7 +67,7 @@ class NeverExecutor:
 
 class ClickPolicy:
     def decide(
-        self, task, current, history, reference_images=(), feedback=()
+        self, task, current, history, reference_images=()
     ):
         return Decision(
             action=ClickAction(kind="click", x=10, y=10),
@@ -89,13 +90,12 @@ class SequencePolicy:
         self.calls = []
 
     def decide(
-        self, task, current, history, reference_images=(), feedback=()
+        self, task, current, history, reference_images=()
     ):
         self.calls.append(
             {
                 "history": list(history),
                 "reference_images": list(reference_images),
-                "feedback": list(feedback),
             }
         )
         action = self.actions.pop(0)
@@ -174,7 +174,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result.status, "success")
         self.assertEqual(result.steps, [])
 
-    def test_runner_blocks_repeated_action_when_screen_did_not_change(self):
+    def test_runner_stops_after_five_executed_repeats(self):
         executor = CountingExecutor()
         runner = AgentRunner(
             FakePerception(observation()),
@@ -183,54 +183,42 @@ class AgentTests(unittest.TestCase):
             DomainEvaluator(None),
         )
 
-        result = runner.run("테스트", max_steps=2)
+        result = runner.run("테스트", max_steps=10)
 
-        self.assertEqual(executor.calls, 1)
+        self.assertEqual(executor.calls, 5)
         self.assertEqual(result.status, "blocked")
-        self.assertEqual(len(result.steps), 1)
-        self.assertFalse(result.steps[0].result.state_changed)
+        self.assertEqual(len(result.steps), 5)
         self.assertEqual(result.steps[0].expected_outcome, "화면이 변경됩니다.")
 
-    def test_controller_reprompts_after_nearby_stalled_click(self):
+    def test_controller_allows_retry_and_nearby_click_without_reprompt(self):
         policy = SequencePolicy(
             [
                 ClickAction(kind="click", x=120, y=120),
+                ClickAction(kind="click", x=120, y=120),
                 ClickAction(kind="click", x=125, y=123),
-                ClickAction(kind="click", x=300, y=200),
             ]
         )
         controller = VisionAgentController(policy)
         current = observation()
-        first = controller.propose("테스트", current)
-        controller.record(current, first, ExecutionResult(ok=True), current)
+        for expected_x in (120, 120, 125):
+            decision = controller.propose("테스트", current)
+            self.assertEqual(decision.action.x, expected_x)
+            controller.record(current, decision, ExecutionResult(ok=True), current.url)
+        self.assertEqual(controller.model_calls, 3)
 
-        recovered = controller.propose("테스트", current)
-
-        self.assertEqual((recovered.action.x, recovered.action.y), (300, 200))
-        self.assertEqual(controller.last_proposal_count, 2)
-        self.assertEqual(len(controller.last_rejections), 1)
-        self.assertIn("변하지 않았습니다", policy.calls[-1]["feedback"][0])
-
-    def test_controller_blocks_state_cycle(self):
+    def test_controller_allows_returning_to_previous_screen(self):
         policy = SequencePolicy(
-            [ClickAction(kind="click", x=100, y=100) for _ in range(5)]
+            [ClickAction(kind="click", x=100, y=100) for _ in range(3)]
         )
         controller = VisionAgentController(policy)
         state_a = observation(color="white")
         state_b = observation(color="black")
 
         first = controller.propose("테스트", state_a)
-        controller.record(state_a, first, ExecutionResult(ok=True), state_b)
+        controller.record(state_a, first, ExecutionResult(ok=True), state_b.url)
         second = controller.propose("테스트", state_b)
-        controller.record(state_b, second, ExecutionResult(ok=True), state_a)
-        blocked = controller.propose("테스트", state_a)
-
-        self.assertIsInstance(blocked.action, DoneAction)
-        self.assertEqual(blocked.action.status, "blocked")
-        self.assertEqual(controller.last_proposal_count, 3)
-        self.assertTrue(
-            all("상태 순환" in reason for reason in controller.last_rejections)
-        )
+        controller.record(state_b, second, ExecutionResult(ok=True), state_a.url)
+        self.assertIsInstance(controller.propose("테스트", state_a).action, ClickAction)
 
     def test_controller_rejects_viewport_boundary_coordinate(self):
         policy = SequencePolicy(
@@ -243,8 +231,10 @@ class AgentTests(unittest.TestCase):
 
         decision = controller.propose("테스트", observation())
 
-        self.assertEqual(decision.action.x, 1279)
-        self.assertIn("뷰포트", controller.last_rejections[0])
+        self.assertEqual(decision.action.status, "blocked")
+        self.assertIn("뷰포트", decision.action.summary)
+        self.assertEqual(controller.model_calls, 1)
+        self.assertEqual(controller.history, [])
 
     def test_controller_passes_task_reference_images(self):
         policy = SequencePolicy(
@@ -256,24 +246,74 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(policy.calls[0]["reference_images"], ["reference"])
 
-    def test_visual_state_ignores_single_pixel_noise(self):
-        before = observation()
-        after = before.model_copy(
-            update={"screenshot_base64": screenshot("white", changed_pixel=True)}
-        )
+    def test_repetition_threshold_uses_execution_history_without_model_call(self):
+        for action in (
+            ClickAction(kind="click", x=10, y=10),
+            TypeAction(kind="type", text="query"),
+            PressAction(kind="press", key="Enter"),
+            ScrollAction(kind="scroll", delta_y=500),
+        ):
+            with self.subTest(action=action):
+                policy = SequencePolicy([action] * 3)
+                controller = VisionAgentController(policy, repeating_action_failure_th=3)
+                current = observation()
+                for index in range(3):
+                    decision = controller.propose("goal", current)
+                    self.assertEqual(decision.action, action)
+                    # 실패한 실행과 URL 변화도 VWA처럼 반복 횟수에 포함한다.
+                    controller.record(current, decision, ExecutionResult(ok=False),
+                                      f"https://example.com/{index}")
+                stopped = controller.propose("goal", current)
+                self.assertEqual(stopped.action.status, "blocked")
+                self.assertEqual(controller.model_calls, 3)
+                self.assertEqual(len(policy.calls), 3)
 
-        self.assertTrue(
-            VisualState.from_observation(before).equivalent(
-                VisualState.from_observation(after)
-            )
-        )
+    def test_intervening_action_resets_keyboard_typing_repetition(self):
+        typing = TypeAction(kind="type", text="query")
+        click = ClickAction(kind="click", x=10, y=10)
+        actions = [typing, typing, click, typing, typing]
+        policy = SequencePolicy(actions)
+        controller = VisionAgentController(policy, repeating_action_failure_th=3)
+        current = observation()
+        for expected in actions:
+            decision = controller.propose("goal", current)
+            self.assertEqual(decision.action, expected)
+            controller.record(current, decision, ExecutionResult(ok=True), current.url)
 
-    def test_visual_state_detects_large_change(self):
-        self.assertFalse(
-            VisualState.from_observation(observation(color="white")).equivalent(
-                VisualState.from_observation(observation(color="black"))
-            )
-        )
+    def test_action_equivalence_matches_low_level_actions(self):
+        cases = [
+            (ClickAction(kind="click", x=120, y=120),
+             ClickAction(kind="click", x=125, y=123), False),
+            (ScrollAction(kind="scroll", delta_y=100),
+             ScrollAction(kind="scroll", delta_y=900), True),
+            (ScrollAction(kind="scroll", delta_y=100),
+             ScrollAction(kind="scroll", delta_y=-100), False),
+            (PressAction(kind="press", key="a"),
+             PressAction(kind="press", key="A"), False),
+            (TypeAction(kind="type", text="a"),
+             TypeAction(kind="type", text="A"), False),
+            (PressAction(kind="press", key="a"),
+             TypeAction(kind="type", text="a"), False),
+        ]
+        for left, right, expected in cases:
+            with self.subTest(left=left, right=right):
+                self.assertEqual(is_equivalent(left, right), expected)
+
+    def test_controller_rejects_empty_actions_without_execution_or_retry(self):
+        for action in (TypeAction(kind="type", text=""),
+                       PressAction(kind="press", key=" "),
+                       ScrollAction(kind="scroll", delta_y=0)):
+            with self.subTest(action=action):
+                controller = VisionAgentController(SequencePolicy([action]))
+                self.assertEqual(controller.propose("goal", observation()).action.status,
+                                 "blocked")
+                self.assertEqual(controller.model_calls, 1)
+                self.assertEqual(controller.history, [])
+
+    def test_controller_rejects_nonpositive_threshold(self):
+        for threshold in (0, -1):
+            with self.assertRaises(ValueError):
+                VisionAgentController(ClickPolicy(), threshold)
 
     def test_policy_sends_only_current_screenshot_and_reference_image(self):
         done = Decision(
@@ -292,7 +332,6 @@ class AgentTests(unittest.TestCase):
             ),
             history=[],
             reference_images=[reference_image],
-            feedback=["이전 좌표는 화면 밖입니다."],
         )
 
         content = client.responses.request["input"][0]["content"]
@@ -306,7 +345,7 @@ class AgentTests(unittest.TestCase):
                 f"data:image/png;base64,{reference_image}",
             ],
         )
-        self.assertIn("이전 좌표", content[0]["text"])
+        self.assertIn("Recent executed actions:", content[0]["text"])
 
 
 if __name__ == "__main__":

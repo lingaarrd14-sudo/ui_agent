@@ -70,13 +70,11 @@ class Observation(StrictModel):
 
 
 class ExecutionResult(StrictModel):
-    """액션 실행 성공 여부와 실행 전후의 브라우저 상태 변화."""
+    """액션 실행 성공 여부와 실행 후 URL, 새 페이지 생성 여부."""
 
     ok: bool
     message: str = ""
-    before_url: str = ""
     after_url: str = ""
-    state_changed: bool = False
     opened_new_page: bool = False
 
 

@@ -14,7 +14,7 @@ from ui_agent.models import ClickAction, Decision, DoneAction, ExecutionResult
 from ui_agent.vwa_adapter import VisualWebArenaAdapter, decision_to_vwa_action
 from ui_agent.vwa_runtime import BrowserEnvActionFactory
 from ui_agent.vwa_results import persist_run_config, read_latest_results
-from ui_agent.vwa_tasks import run_selected_tasks
+from ui_agent.vwa_tasks import _run_agent_steps, run_selected_tasks
 
 
 class FakeActionFactory:
@@ -70,10 +70,16 @@ class FakePage:
 class FakeTaskEnvironment:
     def __init__(self):
         self.page = FakePage()
+        self.actions = []
 
     def reset(self, options):
         current = state()
         return current["observation"], current["info"]
+
+    def step(self, action):
+        self.actions.append(action)
+        current = state()
+        return current["observation"], 0, False, False, current["info"]
 
 
 def state(color=255, url="https://example.com", failure=""):
@@ -88,7 +94,7 @@ class OneDecisionPolicy:
         self.decision = decision
 
     def decide(
-        self, task, observation, history, reference_images=(), feedback=()
+        self, task, observation, history, reference_images=()
     ):
         return self.decision
 
@@ -188,7 +194,7 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
 
         self.assertEqual(action["kind"], "click")
         self.assertEqual(before.viewport_width, 30)
-        self.assertTrue(record.result.state_changed)
+        self.assertTrue(record.result.ok)
         self.assertEqual(record.result.after_url, "https://example.com/next")
 
     def test_result_directory_rejects_incompatible_resume(self):
@@ -222,7 +228,7 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
         )
         options = SimpleNamespace(
             max_steps=2,
-            max_proposals=3,
+            repeating_action_failure_th=5,
             viewport_width=30,
             viewport_height=20,
             save_traces=False,
@@ -256,7 +262,36 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
 
             latest = read_latest_results(result_dir / "results.jsonl")
             self.assertEqual(latest[("reddit", 7)]["score"], 1.0)
+            self.assertEqual(latest[("reddit", 7)]["steps"], 0)
             self.assertEqual(bindings.trajectory[-1]["kind"], "stop")
+
+    def test_task_runner_records_repetition_stop_without_extra_model_call(self):
+        for max_steps, expected_calls in ((10, 3), (2, 2), (3, 3)):
+            with self.subTest(max_steps=max_steps):
+                env = FakeTaskEnvironment()
+                trajectory, records, calls = _run_agent_steps(
+                    options=SimpleNamespace(
+                        max_steps=max_steps, repeating_action_failure_th=3,
+                        viewport_width=30, viewport_height=20,
+                    ),
+                    bindings=FakeTaskBindings(),
+                    policy=OneDecisionPolicy(Decision(
+                        action=ClickAction(kind="click", x=10, y=10),
+                        expected_outcome="Click the target",
+                    )),
+                    action_factory=FakeActionFactory(), env=env,
+                    task={"intent": "goal"}, runtime_config=Path("unused.json"),
+                    reference_images=[],
+                )
+                self.assertEqual(calls, expected_calls)
+                self.assertEqual(len(env.actions), expected_calls)
+                self.assertEqual(len(trajectory), 2 * expected_calls + 2)
+                self.assertEqual(trajectory[-1]["kind"], "stop")
+                if max_steps > 3:
+                    self.assertFalse(records[-1]["executed"])
+                    self.assertEqual(records[-1]["decision"]["action"]["status"], "blocked")
+                else:
+                    self.assertEqual(trajectory[-1]["answer"], "Maximum steps reached")
 
 
 if __name__ == "__main__":

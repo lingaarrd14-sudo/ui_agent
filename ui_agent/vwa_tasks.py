@@ -24,7 +24,7 @@ class BenchmarkOptions(Protocol):
     """Task 실행에 필요한 CLI 옵션의 최소 계약."""
 
     max_steps: int
-    max_proposals: int
+    repeating_action_failure_th: int
     viewport_width: int
     viewport_height: int
     save_traces: bool
@@ -66,10 +66,9 @@ def _run_agent_steps(
         action_factory=action_factory,
         viewport_width=options.viewport_width,
         viewport_height=options.viewport_height,
-        max_proposals=options.max_proposals,
+        repeating_action_failure_th=options.repeating_action_failure_th,
     )
     step_records: list[dict[str, Any]] = []
-    model_calls = 0
 
     for step in range(1, options.max_steps + 1):
         decision, before, action = adapter.decide(
@@ -78,10 +77,7 @@ def _run_agent_steps(
         audit = {
             "step": step,
             "decision": decision.model_dump(mode="json"),
-            "rejected_proposals": adapter.controller.last_rejections.copy(),
-            "model_calls": adapter.controller.last_proposal_count,
         }
-        model_calls += adapter.controller.last_proposal_count
         step_records.append(audit)
         trajectory.append(action)
         print(f"  step {step}: {decision.action.model_dump(mode='json')}", flush=True)
@@ -111,7 +107,7 @@ def _run_agent_steps(
     else:
         trajectory.append(bindings.create_stop_action("Maximum steps reached"))
 
-    return trajectory, step_records, model_calls
+    return trajectory, step_records, adapter.model_calls
 
 
 def _score_task(
@@ -170,7 +166,7 @@ def _execute_task(
         env.save_trace(trace_dir / f"{task['task_id']}.zip")
     return {
         "score": score,
-        "steps": len(step_records),
+        "steps": sum(bool(step.get("executed")) for step in step_records),
         "model_calls": model_calls,
         "status": "pass" if score == 1.0 else "fail",
         "step_records": step_records,

@@ -81,9 +81,9 @@ class AgentRunner:
                 )
 
             result = self.executor.execute(decision.action)
-            # 실행 후 다시 관찰해 URL뿐 아니라 의미 있는 화면 변화도 검증한다.
+            # 실행 후 관찰한 URL을 이력에 남긴다.
             after = self.perception.capture()
-            controller.record(observation, decision, result, after)
+            controller.record(observation, decision, result, after.url)
 
         return RunResult(
             status="max_steps",
