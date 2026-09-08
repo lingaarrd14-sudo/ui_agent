@@ -56,6 +56,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domain", choices=["all", *DOMAIN_SOURCES], default="all")
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int)
+    parser.add_argument(
+        "--exclude-task-ids",
+        type=int,
+        nargs="*",
+        default=[],
+        help="Task IDs to remove before applying --start/--end.",
+    )
     parser.add_argument("--max-steps", type=int, default=15)
     parser.add_argument("--repeating-action-failure-th", type=int, default=5)
     parser.add_argument("--model", default=os.environ.get("MODEL", "gpt-5.6-terra"))
@@ -120,6 +127,7 @@ def build_run_metadata(
         "domains": domains,
         "start": args.start,
         "end": args.end,
+        "excluded_task_ids": sorted(set(args.exclude_task_ids)),
         "site_urls": site_urls(),
         "validation": validation,
     }
@@ -135,7 +143,9 @@ def run() -> int:
     result_dir = args.result_dir.resolve()
     result_dir.mkdir(parents=True, exist_ok=True)
     generated = generate_configs(result_dir, domains)
-    selected = task_selection(generated, args.start, args.end)
+    selected = task_selection(
+        generated, args.start, args.end, set(args.exclude_task_ids)
+    )
     validation = validate_selection(selected)
     metadata = build_run_metadata(args, domains, validation, base_url)
     persist_run_config(result_dir, metadata)

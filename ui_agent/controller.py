@@ -69,10 +69,7 @@ class VisionAgentController:
     ) -> Decision:
         """VWA early_stop처럼 실행된 동일 액션이 임계치에 도달하면 종료한다."""
         k = self.repeating_action_failure_th
-        recent = self.history[-k:]
-        if len(recent) == k and all(
-            is_equivalent(step.action, recent[-1].action) for step in recent
-        ):
+        if self.history and self.history[-1].repeat_count >= k:
             return self._blocked(f"동일 액션을 {k}회 연속 실행해 조기 종료했습니다.")
 
         self.model_calls += 1
@@ -97,9 +94,13 @@ class VisionAgentController:
         after_url: str,
     ) -> StepRecord:
         """실행 결과와 URL을 기록하고 화면 변화 판단은 다음 관찰에 맡긴다."""
+        repeat_count = 1
+        if self.history and is_equivalent(self.history[-1].action, decision.action):
+            repeat_count = self.history[-1].repeat_count + 1
         record = StepRecord(
             url=before.url,
             action=decision.action,
+            repeat_count=repeat_count,
             expected_outcome=decision.expected_outcome,
             result=result.model_copy(update={"after_url": after_url}),
         )

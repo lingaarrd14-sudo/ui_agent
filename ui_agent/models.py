@@ -83,6 +83,7 @@ class StepRecord(StrictModel):
 
     url: str
     action: Action
+    repeat_count: int = 1
     expected_outcome: str
     result: ExecutionResult
 

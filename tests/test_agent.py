@@ -20,7 +20,7 @@ from ui_agent.models import (
     TypeAction,
 )
 from ui_agent.runner import AgentRunner, DomainEvaluator
-from ui_agent.policy import OpenAIVisionPolicy
+from ui_agent.policy import INSTRUCTIONS, OpenAIVisionPolicy
 from ui_agent.playwright_runtime import BrowserSession
 
 
@@ -263,6 +263,15 @@ class AgentTests(unittest.TestCase):
                     # 실패한 실행과 URL 변화도 VWA처럼 반복 횟수에 포함한다.
                     controller.record(current, decision, ExecutionResult(ok=False),
                                       f"https://example.com/{index}")
+                self.assertEqual(
+                    [step.repeat_count for step in controller.history], [1, 2, 3]
+                )
+                self.assertIn(
+                    '"repeat_count": 3',
+                    OpenAIVisionPolicy._build_prompt(
+                        "goal", current, controller.history
+                    ),
+                )
                 stopped = controller.propose("goal", current)
                 self.assertEqual(stopped.action.status, "blocked")
                 self.assertEqual(controller.model_calls, 3)
@@ -279,6 +288,9 @@ class AgentTests(unittest.TestCase):
             decision = controller.propose("goal", current)
             self.assertEqual(decision.action, expected)
             controller.record(current, decision, ExecutionResult(ok=True), current.url)
+        self.assertEqual(
+            [step.repeat_count for step in controller.history], [1, 2, 1, 1, 2]
+        )
 
     def test_action_equivalence_matches_low_level_actions(self):
         cases = [
@@ -316,6 +328,7 @@ class AgentTests(unittest.TestCase):
                 VisionAgentController(ClickPolicy(), threshold)
 
     def test_policy_sends_only_current_screenshot_and_reference_image(self):
+        self.assertIn("repeat_count", INSTRUCTIONS)
         done = Decision(
             action=DoneAction(kind="done", status="success", summary="완료"),
             expected_outcome="종료",

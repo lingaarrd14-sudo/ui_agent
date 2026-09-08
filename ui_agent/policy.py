@@ -18,6 +18,8 @@ to focus it first; focus may not visibly change the screenshot. Use press for ke
 including Enter to submit when needed. Use nonzero signed delta_y to scroll vertically.
 Choose each action from the current observation. Repeating an action can be valid, such as
 scrolling further or retrying a click; if it is not helping, reconsider the target or approach.
+In recent executed actions, repeat_count is that action's consecutive execution count; use it
+to notice loops and change approach when repetition is not making progress.
 Return done/success with the requested answer or a factual summary when the goal is complete.
 If you cannot proceed, return done/blocked with the concrete reason."""
 

@@ -142,6 +142,15 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
             self.assertEqual(json.loads(generated["shopping"][0].read_text())["task_id"], 2)
             self.assertIn("viewport_size", json.loads(source.read_text())[0])
 
+    def test_task_selection_excludes_ids_before_batching(self):
+        paths = [Path(f"{task_id}.json") for task_id in range(5)]
+
+        selected = vwa_config.task_selection(
+            {"shopping": paths}, start=1, end=3, excluded_task_ids={1, 3}
+        )
+
+        self.assertEqual([path.name for _, path in selected], ["2.json", "4.json"])
+
     def test_decision_schema_accepts_benchmark_answer(self):
         decision = Decision(
             action=DoneAction(kind="done", status="success", summary="blue kayak"),

@@ -129,11 +129,16 @@ def generate_configs(result_dir: Path, domains: Sequence[str]) -> dict[str, list
 
 
 def task_selection(
-    generated: dict[str, list[Path]], start: int, end: int | None
+    generated: dict[str, list[Path]],
+    start: int,
+    end: int | None,
+    excluded_task_ids: set[int] | None = None,
 ) -> list[tuple[str, Path]]:
-    """Apply the same half-open index range independently to each domain."""
+    """Exclude task IDs, then apply the same half-open range to each domain."""
+    excluded_task_ids = excluded_task_ids or set()
     selected: list[tuple[str, Path]] = []
     for domain, paths in generated.items():
+        paths = [path for path in paths if int(path.stem) not in excluded_task_ids]
         upper = len(paths) if end is None else min(end, len(paths))
         selected.extend((domain, path) for path in paths[start:upper])
     return selected
