@@ -13,11 +13,14 @@ from .controller import VisionAgentController, VisionPolicy
 from .models import (
     ClickAction,
     Decision,
-    DoneAction,
     ExecutionResult,
+    GoBackAction,
+    GoForwardAction,
+    HoverAction,
     Observation,
     PressAction,
     ScrollAction,
+    StopAction,
     StepRecord,
     TypeAction,
 )
@@ -28,11 +31,17 @@ class VWAActionFactory(Protocol):
 
     def click(self, x: int, y: int) -> Any: ...
 
+    def hover(self, x: int, y: int) -> Any: ...
+
     def type_text(self, text: str) -> Any: ...
 
     def press(self, key: str) -> Any: ...
 
     def scroll(self, direction: str) -> Any: ...
+
+    def go_back(self) -> Any: ...
+
+    def go_forward(self) -> Any: ...
 
     def stop(self, answer: str) -> Any: ...
 
@@ -45,13 +54,14 @@ def pil_to_base64(image: Image.Image) -> str:
 
 
 def observation_from_vwa_state(
-    state: dict[str, Any], viewport_width: int, viewport_height: int
+    state: dict[str, Any],
+    viewport_width: int,
+    viewport_height: int,
 ) -> Observation:
     """VWA의 image 관찰만 사용해 공통 Observation을 만든다."""
     pixels = state["observation"]["image"]
     image = pixels if isinstance(pixels, Image.Image) else Image.fromarray(pixels)
     return Observation(
-        url=state["info"]["page"].url,
         screenshot_base64=pil_to_base64(image),
         viewport_width=viewport_width,
         viewport_height=viewport_height,
@@ -63,14 +73,20 @@ def decision_to_vwa_action(decision: Decision, factory: VWAActionFactory) -> Any
     selected = decision.action
     if isinstance(selected, ClickAction):
         action = factory.click(selected.x, selected.y)
+    elif isinstance(selected, HoverAction):
+        action = factory.hover(selected.x, selected.y)
     elif isinstance(selected, TypeAction):
         action = factory.type_text(selected.text)
     elif isinstance(selected, PressAction):
-        action = factory.press(selected.key)
+        action = factory.press(selected.key_comb)
     elif isinstance(selected, ScrollAction):
-        action = factory.scroll("up" if selected.delta_y < 0 else "down")
-    elif isinstance(selected, DoneAction):
-        action = factory.stop(selected.summary)
+        action = factory.scroll(selected.direction)
+    elif isinstance(selected, GoBackAction):
+        action = factory.go_back()
+    elif isinstance(selected, GoForwardAction):
+        action = factory.go_forward()
+    elif isinstance(selected, StopAction):
+        action = factory.stop(selected.answer)
     else:  # pragma: no cover - Pydantic가 액션 합집합을 제한한다.
         raise TypeError(f"지원하지 않는 액션입니다: {selected!r}")
     action["raw_prediction"] = decision.model_dump_json()
@@ -109,23 +125,16 @@ class VisualWebArenaAdapter:
         task: str,
         state: dict[str, Any],
         reference_images: Sequence[str] = (),
-    ) -> tuple[Decision, Observation, Any]:
+    ) -> tuple[Decision, Any]:
         """현재 원시 스크린샷에서 검증된 액션 하나를 제안한다."""
-        before = self.observe(state)
-        decision = self.controller.propose(task, before, reference_images)
-        return decision, before, decision_to_vwa_action(decision, self.action_factory)
+        observation = self.observe(state)
+        decision = self.controller.propose(task, observation, reference_images)
+        return decision, decision_to_vwa_action(decision, self.action_factory)
 
     def record(
         self,
-        before: Observation,
         decision: Decision,
         result: ExecutionResult,
-        after_state: dict[str, Any],
     ) -> StepRecord:
-        """VWA 실행 결과와 실행 후 URL을 공통 이력에 기록한다."""
-        return self.controller.record(
-            before=before,
-            decision=decision,
-            result=result,
-            after_url=after_state["info"]["page"].url,
-        )
+        """VWA 실행 결과를 공통 이력에 기록한다."""
+        return self.controller.record(decision=decision, result=result)

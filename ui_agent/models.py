@@ -19,6 +19,14 @@ class ClickAction(StrictModel):
     y: int = Field(ge=0)
 
 
+class HoverAction(StrictModel):
+    """뷰포트의 절대 좌표로 마우스를 이동한다."""
+
+    kind: Literal["hover"]
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+
+
 class TypeAction(StrictModel):
     """현재 포커스된 요소에 텍스트를 입력한다."""
 
@@ -30,67 +38,73 @@ class PressAction(StrictModel):
     """Playwright가 이해하는 키 이름을 눌러 보낸다."""
 
     kind: Literal["press"]
-    key: str
+    key_comb: str
 
 
 class ScrollAction(StrictModel):
-    """세로 방향으로 제한된 거리만큼 스크롤한다."""
+    """VisualWebArena와 같이 한 뷰포트 위나 아래로 스크롤한다."""
 
     kind: Literal["scroll"]
-    delta_y: int = Field(ge=-2000, le=2000)
+    direction: Literal["up", "down"]
 
 
-class DoneAction(StrictModel):
-    """모델이 작업 성공 또는 진행 불가를 선언한다."""
+class GoBackAction(StrictModel):
+    kind: Literal["go_back"]
 
-    kind: Literal["done"]
+
+class GoForwardAction(StrictModel):
+    kind: Literal["go_forward"]
+
+
+class StopAction(StrictModel):
+    """VisualWebArena STOP과 내부 종료 상태를 함께 표현한다."""
+
+    kind: Literal["stop"]
     status: Literal["success", "blocked"]
-    summary: str
+    answer: str
 
 
 # discriminator를 강제로 지정하지 않아 OpenAI 호환 게이트웨이에서도
 # `anyOf` 기반 Structured Outputs 스키마를 사용할 수 있게 한다.
-Action = ClickAction | TypeAction | PressAction | ScrollAction | DoneAction
+Action = (
+    ClickAction
+    | HoverAction
+    | TypeAction
+    | PressAction
+    | ScrollAction
+    | GoBackAction
+    | GoForwardAction
+    | StopAction
+)
 
 
 class Decision(StrictModel):
-    """모델이 선택한 단일 액션과 그 액션에서 기대하는 결과."""
+    """현재 화면 요약, 단일 액션, 그 액션에서 기대하는 결과."""
 
+    state_summary: str
     action: Action
     expected_outcome: str
 
 
 class Observation(StrictModel):
-    """판단 시점의 URL, 화면 이미지, 좌표계 크기."""
+    """판단 시점의 화면 이미지와 좌표계 크기."""
 
-    url: str
     screenshot_base64: str
     viewport_width: int
     viewport_height: int
 
 
 class ExecutionResult(StrictModel):
-    """액션 실행 성공 여부와 실행 후 URL, 새 페이지 생성 여부."""
+    """다음 모델 판단에 공개할 액션 실행 성공 여부."""
 
     ok: bool
-    message: str = ""
-    after_url: str = ""
-    opened_new_page: bool = False
 
 
 class StepRecord(StrictModel):
     """다음 판단에 제공할 한 단계의 결정 및 실행 이력."""
 
-    url: str
+    state_summary: str
     action: Action
     repeat_count: int = 1
     expected_outcome: str
     result: ExecutionResult
-
-
-class RunResult(StrictModel):
-    """에이전트 종료 상태와 전체 실행 이력."""
-
-    status: Literal["success", "blocked", "max_steps"]
-    summary: str
-    steps: list[StepRecord]

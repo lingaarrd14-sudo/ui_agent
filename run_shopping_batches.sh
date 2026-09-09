@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every non-viewport shopping task in reset-separated batches.
+# Run eligible single-page shopping tasks in reset-separated batches.
 set -euo pipefail
 
 # Edit these values for a different experiment.
@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${PYTHON:-$SCRIPT_DIR/.venv/bin/python}"
 VWA_ROOT="${VWA_ROOT:-$SCRIPT_DIR/../visualwebarena}"
 RESULT_ROOT="${RESULT_ROOT:-$SCRIPT_DIR/benchmark_results/shopping_$(date +%Y%m%d_%H%M%S)}"
-TASK_CONFIG="$VWA_ROOT/config_files/vwa/test_shopping.json"
+TASK_CONFIG="$VWA_ROOT/config_files/vwa/test_shopping.raw.json"
 
 if [[ ! -x "$PYTHON" ]]; then
     echo "Python executable not found: $PYTHON" >&2
@@ -33,7 +33,9 @@ config_path, *skipped = sys.argv[1:]
 skip_ids = {int(task_id) for task_id in skipped}
 tasks = json.load(open(config_path, encoding="utf-8"))
 print(sum(
-    "viewport_size" not in task and task["task_id"] not in skip_ids
+    "viewport_size" not in task
+    and "|AND|" not in task.get("start_url", "")
+    and task["task_id"] not in skip_ids
     for task in tasks
 ))
 PY

@@ -1,7 +1,7 @@
 """Run the vision-only UI agent on VisualWebArena without modifying VWA.
 
 VisualWebArena supplies task data, authentication, browser execution, and the
-official evaluator. The agent receives only the current raw screenshot, URL,
+official evaluator. The agent receives only the current raw screenshot,
 viewport, recent executed actions, and task-provided reference images. It never
 receives SoM marks, accessibility-tree text, or generated captions.
 """
@@ -43,12 +43,7 @@ from ui_agent.vwa_runtime import (
 from ui_agent.vwa_tasks import run_selected_tasks
 
 
-VWA_INSTRUCTIONS = INSTRUCTIONS + """
-For an information-retrieval goal, put only the requested answer in done.summary because the
-official evaluator scores that text. For navigation or modification goals, use a short factual
-completion summary. VisualWebArena scrolling moves approximately one viewport in the sign of
-delta_y, so inspect the next screenshot before scrolling again.
-"""
+VWA_SLEEP_AFTER_EXECUTION = 2.5
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,8 +68,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-traces", action="store_true")
     parser.add_argument(
         "--eval-caption-device",
-        choices=["auto", "cpu", "cuda"],
-        default="auto",
+        choices=["cpu", "cuda"],
+        default="cpu",
         help="Used only by official page_image_query evaluation, not by the agent.",
     )
     parser.add_argument(
@@ -116,13 +111,17 @@ def build_run_metadata(
         "agent_source_sha256": source_digest(UI_ROOT),
         "agent": "ui_agent_vision_only",
         "observation": "raw_screenshot",
+        "action_space": "single_page_screenshot_actions",
+        "excludes_multi_tab_tasks": True,
         "uses_som": False,
         "uses_agent_captioning": False,
         "model": args.model,
         "api_base_url": base_url or "OpenAI SDK default",
-        "policy_instructions": VWA_INSTRUCTIONS,
+        "policy_instructions": INSTRUCTIONS,
         "max_steps": args.max_steps,
         "repeating_action_failure_th": args.repeating_action_failure_th,
+        "sleep_after_execution": VWA_SLEEP_AFTER_EXECUTION,
+        "eval_caption_device": args.eval_caption_device,
         "viewport": [args.viewport_width, args.viewport_height],
         "domains": domains,
         "start": args.start,
@@ -176,7 +175,7 @@ def run() -> int:
     if base_url:
         client_options["base_url"] = base_url
     policy = OpenAIVisionPolicy(
-        OpenAI(**client_options), args.model, instructions=VWA_INSTRUCTIONS
+        OpenAI(**client_options), args.model
     )
     action_factory = BrowserEnvActionFactory(
         bindings, args.viewport_width, args.viewport_height
@@ -188,7 +187,7 @@ def run() -> int:
         current_viewport_only=True,
         viewport_size={"width": args.viewport_width, "height": args.viewport_height},
         save_trace_enabled=args.save_traces,
-        sleep_after_execution=0.8,
+        sleep_after_execution=VWA_SLEEP_AFTER_EXECUTION,
     )
 
     results_path = result_dir / "results.jsonl"

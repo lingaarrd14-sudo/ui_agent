@@ -37,6 +37,7 @@ SUPPORTED_EVAL_TYPES = {
     "program_html",
     "page_image_query",
 }
+MULTI_TAB_SEPARATOR = "|AND|"
 
 
 def load_local_environment() -> None:
@@ -63,7 +64,7 @@ def configure_environment(require_api_key: bool) -> tuple[str | None, str | None
     api_key = os.environ.get("OPENAI_API_KEY")
     if require_api_key and not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured in ui_agent/.env")
-    base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("BASE_URL")
+    base_url = os.environ.get("OPENAI_BASE_URL")
     return api_key, base_url
 
 
@@ -112,6 +113,10 @@ def generate_configs(result_dir: Path, domains: Sequence[str]) -> dict[str, list
         output_dir.mkdir(parents=True, exist_ok=True)
         paths: list[Path] = []
         for task in tasks:
+            # Raw page screenshots do not expose the browser tab strip, so tasks
+            # that begin with multiple pages are outside this agent's observation.
+            if MULTI_TAB_SEPARATOR in task.get("start_url", ""):
+                continue
             # Viewport-controlled experiments use only tasks that do not
             # prescribe their own browser dimensions.
             if domain == "shopping" and "viewport_size" in task:

@@ -1,189 +1,194 @@
 # UI Agent
 
-원시 브라우저 스크린샷을 보고 좌표 클릭, 입력, 키 입력, 스크롤을 수행하는
-vision-only 웹 에이전트입니다. 모델 입력에는 SoM 표시, DOM/접근성 트리,
-이미지 캡션이 들어가지 않습니다. VisualWebArena task에 원래 포함된 reference
-image만 별도의 원본 이미지로 전달합니다.
+VisualWebArena(VWA)의 task, 인증, 브라우저 환경, 공식 evaluator를 사용하는
+스크린샷 기반 웹 에이전트입니다. 실행 진입점은 `vwa_benchmark.py`입니다.
+VWA checkout은 프로젝트와 나란히 `../visualwebarena`에 있어야 합니다.
 
-## 신뢰성 경계
+## 모델 입력과 액션
 
-실행 흐름은 VisualWebArena의 `observe → decide → act → observe → evaluate` 구조를
-따르되, 액션 결정과 유효성 검증은 `ui_agent`가 소유합니다.
+모델에는 task의 목표, 현재 화면, 직전 액션 전 화면 한 장, 화면 크기, 최근 실행
+5단계의 짧은 화면 요약과 task에 포함된 reference image를 전달합니다. 첫 단계에는
+직전 화면이 없습니다. DOM/접근성 트리, SoM 표시,
+생성 캡션, 현재 URL, 탭 목록, evaluator의 정답과 불가능 사유는 전달하지 않습니다.
+Reference image는 PNG로 변환해 별도의 이미지 입력으로 보냅니다.
 
-- 모델은 Pydantic 스키마에 맞는 액션 하나만 반환합니다.
-- 클릭은 현재 뷰포트 안의 좌표만 허용합니다.
-- 단계당 모델을 한 번 호출하고, 실제 실행 이력에서 동일 액션이 기본 5회 연속
-  나타나면 다음 모델 호출 전에 `blocked`로 종료합니다.
-- 클릭은 정수 좌표, 입력은 텍스트, 키 입력은 키 문자열, 스크롤은 방향으로
-  동일성을 비교합니다. 화면 무변화나 이전 화면 재방문만으로 차단하지 않습니다.
-- 화면 변화는 다음 스크린샷에서 모델이 판단합니다. 별도 픽셀 비교나 순환 추적,
-  거절 피드백을 넣은 재제안 호출은 없습니다. 유효하지 않은 액션은 실행 없이 종료합니다.
-- VisualWebArena 결과의 성공 여부는 모델의 자기 선언이 아니라 공식 evaluator가
-  최종 판정합니다.
-
-## 구조
-
-| 경로 | 역할 |
+| 액션 | 실행 의미 |
 | --- | --- |
-| `agent.py` | 단독 실행 설정과 컴포넌트 조립 |
-| `ui_agent/models.py` | 관찰, 구조화 액션, 실행 결과 계약 |
-| `ui_agent/controller.py` | 실행 이력 기반 반복 조기 종료, 액션 유효성 검증 |
-| `ui_agent/policy.py` | OpenAI Responses API vision 정책 |
-| `ui_agent/playwright_runtime.py` | Playwright 페이지 관리, 화면 관찰, 액션 실행 |
-| `ui_agent/runner.py` | 단독 실행 루프 |
-| `ui_agent/vwa_adapter.py` | 공통 액션과 VWA 저수준 액션 사이의 얇은 변환 계층 |
-| `ui_agent/vwa_config.py` | VWA 환경변수, 원본 task 변환과 사전 검증 |
-| `ui_agent/vwa_runtime.py` | VWA import, 인증, 액션 factory, 평가 captioner 경계 |
-| `ui_agent/vwa_tasks.py` | task 실행, 공식 평가, task별 결과 저장 |
-| `ui_agent/vwa_results.py` | 재현 가능한 run identity와 append-only 결과 관리 |
-| `vwa_benchmark.py` | CLI 설정과 VWA task/auth/browser 컴포넌트 조립 |
-| `summarize_benchmark.py` | 재시도 결과를 중복 제거한 요약 출력 |
+| `click`, `hover` | 화면 내 정수 픽셀 좌표를 VWA의 정규화된 좌표로 변환 |
+| `type` | 현재 포커스에 텍스트 추가. 기존 내용 삭제와 Enter는 별도 액션 |
+| `press` | `key_comb`에 지정한 키 조합 실행 |
+| `scroll` | `up`/`down`으로 약 한 화면 이동 |
+| `go_back`, `go_forward` | 현재 페이지의 방문 기록 이동 |
+| `stop` | 답변을 남기고 task 종료. 브라우저에는 실행하지 않음 |
 
-`vwa_benchmark.py`는 VisualWebArena의 `browser_env`, `auto_login`, 공식
-`evaluation_harness`만 사용합니다. VWA의 `PromptAgent`, SoM 프롬프트,
-토크나이저, caption 기반 observation은 가져오지 않습니다. 단,
-`page_image_query` task의 공식 점수를 계산할 때 VWA evaluator가 BLIP-2를 사용할
-수 있습니다. 이것은 평가 단계 전용이며 에이전트 입력에는 들어가지 않습니다.
+`goto`, `new_tab`, `tab_focus`, `close_tab`은 현재 액션 스키마에 없습니다.
+따라서 원본 VWA와 관찰·액션 공간이 동일한 실험은 아닙니다.
 
-생성 config, 로그인 state, trace, 점수는 전부 지정한 `result-dir` 아래에 기록되며
-`visualwebarena` checkout에는 쓰지 않습니다.
+## 종료와 평가
 
-## 반복 처리 변경 근거
+목표를 달성하면 `stop(status="success", answer=...)`를 반환합니다. 정보 요청에는
+요청한 답만, 탐색·수정 목표에는 짧은 완료 문구를 씁니다. 어떤 유형의 목표든
+충분히 확인한 뒤 본질적으로 불가능하다고 판단하면 `answer="N/A"`로 종료합니다.
+확인한 사유는 `expected_outcome`에 남깁니다. 불가능 여부는 모델이 관찰에서 판단하며,
+정답 config를 읽어서 자동으로 종료시키지 않습니다.
 
-참고한 로컬 VisualWebArena commit은 `f29e2a9273278e02a7e4b9da05987612425766d0`입니다.
+운영상 진행할 수 없으면 `stop/blocked`를 사용합니다. 내부 `success`/`blocked`는
+공식 점수가 아닙니다. 반복이나 실행 오류를 자동으로 `N/A`로 바꾸지 않습니다.
 
-- [`run.py:198`](../visualwebarena/run.py#L198)의 `early_stop`은 화면 비교 없이
-  실행된 액션을 검사합니다. 기본 반복 임계치는 5이며, 다음 액션 요청 전에 검사합니다.
-- [`browser_env/actions.py:349`](../visualwebarena/browser_env/actions.py#L349)의
-  `is_equivalent`에 맞춰 스크롤은 방향, 키와 입력은 원문으로 비교합니다.
-  VWA는 정규화된 클릭 좌표에 `np.allclose`를 쓰지만 여기서는 정수 픽셀을 정확히
-  비교합니다. 기존 12px 버킷은 제거했습니다.
-- VWA의 고수준 `TYPE`은 전체 이력에서 같은 대상을 누적하지만, 이 어댑터의
-  `type`은 `KEYBOARD_TYPE`입니다. 따라서 다른 저수준 액션처럼 **연속** 횟수를 셉니다.
-  Structured Outputs 파싱 실패는 기존 오류 경로를 유지하며 VWA의 `NONE` 액션
-  누적 로직은 도입하지 않습니다.
-- [`p_multimodal_cot_id_actree_3s.py`](../visualwebarena/agent/prompts/raw/p_multimodal_cot_id_actree_3s.py)의
-  현재 관찰에 유효한 액션 하나를 선택하고 목표 달성 시 종료하는 규칙을 참고했습니다.
-  프롬프트의 반복 금지를 없애고 스크롤·재시도를 허용하되 진행 여부를 확인하도록 했습니다.
-  실제 저수준 입력 동작에 맞춰 포커스·텍스트 추가·Enter의 역할도 명시했습니다.
+- 같은 액션을 기본 5회 연속 실행하면 다음 모델 호출 전에 종료합니다.
+  실행 실패도 횟수에 포함하며, 화면이 달라져도 동일 액션이면 셉니다. 스크롤은
+  방향이 달라도 연속 스크롤로 세므로 `down`/`up` 왕복도 5회에서 종료합니다.
+- 클릭/hover는 좌표, 입력은 텍스트, press는 키 조합, 스크롤은 방향을 비교합니다.
+  VWA처럼 같은 종류의 인자 없는 액션도 동일하게 봅니다.
+- 기본 `--max-steps 15`는 브라우저 액션 실행 횟수의 상한입니다.
+  상한에 도달하면 추가 모델 호출 없이 STOP을 붙입니다.
+- 좌표 범위나 빈 입력 검증에 실패하면 실행 없이 `blocked`로 종료합니다.
+  모델 응답 파싱/API 예외는 task의 `error`로 기록합니다. 원본의 파싱 실패
+  `NONE` 액션 누적은 구현하지 않습니다.
+- 액션 실행 뒤에는 원본 runner와 같이 2.5초를 기다립니다.
 
-반복 임계치는 `--repeating-action-failure-th 5`로 설정하며 run metadata에 저장합니다.
-기존 `--max-proposals` 옵션과 `rejected_proposals`, `state_changed` 로그 필드는 제거했습니다.
-화면이 변해도 같은 행동이 임계치만큼 연속되면 종료하고, 서로 다른 행동의 순환은
-`max-steps`로 제한합니다. 설정과 소스가 달라졌으므로 기존 결과와 별도 디렉터리를 사용하세요.
+채점은 [원본 evaluator](../visualwebarena/evaluation_harness/evaluators.py)를 직접
+import해 최종 trajectory, runtime config, 실제 페이지로 실행합니다.
 
-## 환경 설정
+| 평가 유형 | 검사 내용 |
+| --- | --- |
+| `string_match` | STOP 답변의 문자열·수치·LLM 의미 일치 |
+| `url_match` | 종료 시점의 페이지 URL |
+| `program_html` | 지정 페이지의 HTML/JS 또는 원본 helper 결과 |
+| `page_image_query` | 이미지 SSIM 유사도 또는 BLIP-2 VQA |
 
-Python 3.11 가상환경을 프로젝트 안에 별도로 만듭니다. WebArena 가상환경은
-사용하지 않습니다.
+여러 평가가 지정되면 원본처럼 점수를 곱합니다. 불가능 정답의 정확한 `N/A`는
+LLM 호출 없이 통과하고, 설명형 답변은 원본의 불가능 사유 비교 LLM으로 평가합니다.
+BLIP-2는 VQA가 필요한 task에서만 로드합니다. 기본 CPU이며
+`--eval-caption-device cuda`로 변경할 수 있습니다. 평가용 모델과 캡션은 에이전트
+입력에 들어가지 않습니다. `--model`은 에이전트 모델만 바꾸며, LLM judge 모델은
+로컬 VWA의 `evaluation_harness/helper_functions.py` 설정을 따릅니다.
+
+## 실행 대상
+
+원본 `config_files/vwa/test_<domain>.raw.json`을 읽어 결과 디렉터리에 실행용
+config를 생성합니다. 여러 시작 URL이 `|AND|`로 연결된 task는 모든 도메인에서
+제외하고, Shopping에서는 `viewport_size` 지정 task도 제외합니다.
+Classifieds의 화면 크기 지정 task는 유지하며, 모델 좌표계와 액션 변환에도
+그 task의 크기를 적용합니다.
+
+현재 로컬 task 파일 기준:
+
+| 도메인 | 원본 task | 기본 실행 대상 |
+| --- | ---: | ---: |
+| Classifieds | 234 | 219 |
+| Reddit | 210 | 170 |
+| Shopping | 466 | 406 |
+
+`--exclude-task-ids`를 추가로 제거한 뒤 `--start`/`--end`의 반열린 구간
+`[start, end)`를 적용합니다. 이 값은 task ID가 아닌 필터링된 목록의 위치입니다.
+`--domain all`에서는 같은 구간을 각 도메인에 적용합니다.
+`--end`를 생략하면 해당 도메인의 남은 대상을 모두 선택합니다.
+
+## 설치와 설정
 
 ```bash
 cd /home/default/agent/ui_agent
-python3.11 -m venv --prompt ui_agent .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m playwright install chromium
 python -m nltk.downloader punkt punkt_tab
 ```
 
-`ui_agent/.env` 예시:
+프로젝트 루트의 `.env`:
 
 ```dotenv
 OPENAI_API_KEY=your-api-key
 MODEL=gpt-5.6-terra
+# 호환 게이트웨이를 사용하는 경우에만 지정
+# OPENAI_BASE_URL=https://example-gateway.invalid/v1
 ```
 
-공식 OpenAI API를 쓸 때는 `OPENAI_BASE_URL`과 `BASE_URL`을 넣지 않으면 됩니다.
-호환 게이트웨이를 쓸 때만 둘 중 하나를 설정합니다.
+쉘에 이미 설정한 환경변수가 `.env`보다 우선합니다. 호환 gateway를 쓸 때는
+`OPENAI_BASE_URL`을 설정하세요. 이 값은 에이전트와 VWA LLM judge가 함께 사용합니다.
 
-```dotenv
-OPENAI_BASE_URL=https://example-gateway.invalid/v1
-```
+사이트 주소 기본값은 `CLASSIFIEDS=http://localhost:9980`,
+`SHOPPING=http://localhost:7770`, `REDDIT=http://localhost:9999`,
+`WIKIPEDIA=http://localhost:8888`, `HOMEPAGE=http://localhost:4399`입니다.
+필요하면 같은 이름의 환경변수로 변경하세요. VWA 사이트는 별도로 구동해야 합니다.
 
-단독 실행에서 사용할 수 있는 환경변수는 `TASK`, `START_URL`, `TARGET_DOMAIN`,
-`MAX_STEPS`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`입니다.
+## 실행
 
-## VisualWebArena 실행
-
-먼저 API 비용이나 브라우저 실행 없이 VWA import와 task 계약을 확인합니다.
+브라우저와 모델 API를 호출하지 않고 import와 선택된 config를 확인합니다.
+VWA evaluator import가 API client를 만들기 때문에 `OPENAI_API_KEY`는 필요합니다.
+원격 사이트 접속과 이미지 다운로드 성공 여부까지 확인하지는 않습니다.
 
 ```bash
-python vwa_benchmark.py \
-  --domain reddit \
-  --start 0 \
-  --end 1 \
-  --viewport-width 1280 \
-  --viewport-height 720 \
-  --result-dir benchmark_results/reddit_validate \
-  --validate-only
+python vwa_benchmark.py --domain reddit --end 1 \
+  --result-dir benchmark_results/reddit_validate --validate-only
 ```
 
-그다음 task 하나만 smoke test합니다.
+한 task 실행:
 
 ```bash
-python vwa_benchmark.py \
-  --domain reddit \
-  --start 0 \
-  --end 1 \
-  --model gpt-5.6-terra \
-  --max-steps 15 \
-  --viewport-width 1280 \
-  --viewport-height 720 \
+python vwa_benchmark.py --domain reddit --end 1 --max-steps 15 \
   --result-dir benchmark_results/reddit_smoke
 ```
 
-
-Reddit 전체 210개 task를 같은 화면 크기로 실행하려면 다음 범위를 사용합니다.
+필터링된 Reddit 전체 170개 실행:
 
 ```bash
-python vwa_benchmark.py \
-  --domain reddit \
-  --start 0 \
-  --end 210 \
-  --model gpt-5.6-terra \
-  --max-steps 30 \
-  --viewport-width 1280 \
-  --viewport-height 720 \
+python vwa_benchmark.py --domain reddit --max-steps 30 \
+  --viewport-width 1280 --viewport-height 720 \
   --result-dir benchmark_results/reddit_1280x720
 ```
 
-`--end`는 포함되지 않는 Python slice의 끝값입니다. 화면 크기 비교 실험에서는
-모델, task 범위, `max-steps`, 사이트 초기 상태를 고정하고 viewport와
-`result-dir`만 바꾸세요.
+기본은 headless입니다. `--headed`로 창을 표시하고 `--save-traces`로
+Playwright trace를 저장할 수 있습니다. 기본 화면 크기는 1280×720입니다.
 
-VWA task 중 일부는 사이트 상태를 변경합니다. 이 runner는 벤치마크 도중 Docker
-컨테이너를 암묵적으로 삭제하거나 초기화하지 않고, 선택 범위의 mutable task 수를
-시작 전에 경고합니다. 비교할 두 run 앞에서 동일한 VWA reset 절차를 적용하고,
-긴 run을 여러 batch로 나눈다면 두 조건 모두 같은 경계에서 reset해야 합니다.
-Reddit 전체 run 전에는 VWA 원본 스크립트를 별도로 실행합니다.
+Shopping 배치 실행은 `bash run_shopping_batches.sh`를 사용합니다. 이 스크립트는
+매 배치 전에 원본 Shopping reset 스크립트를 실행하고, 기본 50개씩 headed로
+실행합니다. 기본 제외 ID는 `284 319 345`이며 현재 실행 대상은 405개입니다.
+`MODEL`, `BATCH_SIZE`, `MAX_STEPS`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`,
+`RESULT_ROOT`를 환경변수로 바꿀 수 있습니다.
 
-```bash
-cd /home/default/agent/visualwebarena
-bash scripts/reset_reddit.sh
-cd /home/default/agent/ui_agent
-```
+## 사이트 상태와 결과
 
-기존 result directory를 컨테이너 reset 뒤 이어서 쓸 때는 로그인 state도 다시
-만들도록 같은 benchmark 명령에 `--refresh-auth`를 추가하세요. 새 result directory는
-auth 파일이 없으므로 자동으로 새 로그인 state를 만듭니다.
+VWA 환경은 `require_reset`이 지정된 Classifieds task에서 사이트 reset API를
+호출합니다. Shopping/Reddit의 상태 초기화는 별도 원본 스크립트가 필요합니다.
+비교 실험에서는 같은 초기 상태와 같은 배치 경계를 사용하세요.
+인증 상태는 결과 디렉터리에 생성해 재사용하며 `--refresh-auth`로 갱신합니다.
+인증 갱신은 사이트 데이터 초기화와 별개입니다.
 
-중단된 결과 디렉터리로 같은 명령을 다시 실행하면 점수가 기록된 task는 건너뛰고
-오류 task만 재시도합니다. `results.jsonl`은 append-only이고 `summary.json`과
-요약 스크립트는 task별 최신 기록만 사용합니다.
+생성 config, auth, trace, 결과는 `--result-dir` 아래에 저장합니다.
+동일 설정·소스로 재실행하면 이미 점수가 있는 task는 건너뛰고 오류 task를
+재시도합니다. 소스, 프롬프트, 모델 등 run metadata가 다르면 같은 결과 디렉터리
+재사용을 거절하므로 새 디렉터리를 지정해야 합니다.
+
+- `run_config.json`: Git 상태, 실행 소스 해시, 프롬프트, 모델, endpoint, 화면 크기와 선택 범위.
+- `results.jsonl`: task별 시도를 추가 기록. 점수 1이면 `pass`, 그 외는 `fail`, 예외는 `error`.
+- `step_records`: 모델 결정과 실행 성공 여부. `steps`는 브라우저 실행 횟수이며 STOP은 제외.
+- `final_url`: evaluator가 페이지를 이동하기 전 에이전트가 끝낸 URL.
+- `summary.json`: task별 최신 시도로 계산한 요약. `score_completed`는 오류를 포함한
+  시도 task 수, `score_planned`는 전체 계획 task 수를 분모로 사용.
 
 ```bash
 python summarize_benchmark.py benchmark_results/reddit_1280x720
 ```
 
-`run_config.json`에는 VWA/agent Git 상태, uncommitted source까지 반영한 SHA-256,
-정확한 프롬프트, 모델, API endpoint 종류, viewport가 저장됩니다. API key는
-저장하지 않습니다.
+runner 종료 코드는 오류 task가 있으면 1, 없으면 0입니다. 평가상 `fail`만 있는
+경우에도 0을 반환합니다. `model_calls`는 정책 요청 횟수이며 SDK 내부 재시도 횟수나
+평가용 LLM 호출 횟수는 포함하지 않습니다.
 
-## 테스트
+## 코드와 테스트
+
+`policy.py`는 모델 입력과 결정, `controller.py`는 반복·액션 검증,
+`vwa_adapter.py`는 관찰과 액션 변환을 담당합니다. `vwa_config.py`는 task 준비,
+`vwa_runtime.py`는 원본 바인딩·인증·captioner, `vwa_tasks.py`는 실행과 평가,
+`vwa_results.py`는 결과와 재실행 설정을 담당합니다.
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py" -v
+python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-단위 테스트는 API, 브라우저, Docker를 사용하지 않습니다.
+테스트는 API, 브라우저, Docker를 실행하지 않습니다. `test_vwa_evaluation.py`는
+로컬 VWA를 직접 import해 문자열, 불가능 사유 비교, URL/HTML 조합, 이미지 SSIM/VQA,
+task 화면 크기 적용을 확인합니다. 선택 대상의 불가능 task 44개도 `N/A` 채점과
+정답 설정 보존을 검사합니다. 외부 LLM 응답·이미지 다운로드·VQA 추론은 mock하므로
+실제 사이트 상태나 모델의 불가능 판단 정확도를 검증하는 테스트는 아닙니다.

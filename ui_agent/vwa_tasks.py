@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Protocol
 
-from .models import DoneAction, ExecutionResult
+from .models import ExecutionResult, StopAction
 from .policy import OpenAIVisionPolicy
 from .vwa_adapter import VisualWebArenaAdapter, pil_to_base64
 from .vwa_config import load_reference_images
@@ -61,19 +61,24 @@ def _run_agent_steps(
     observation, info = env.reset(options={"config_file": str(runtime_config)})
     state: dict[str, Any] = {"observation": observation, "info": info}
     trajectory: list[Any] = [state]
+    viewport = {"width": options.viewport_width, "height": options.viewport_height}
+    viewport.update(task.get("viewport_size", {}))
+    if task.get("viewport_size"):
+        # VWA applies task overrides on reset (including Classifieds tasks).
+        action_factory = BrowserEnvActionFactory(
+            bindings, viewport["width"], viewport["height"]
+        )
     adapter = VisualWebArenaAdapter(
         policy=policy,
         action_factory=action_factory,
-        viewport_width=options.viewport_width,
-        viewport_height=options.viewport_height,
+        viewport_width=viewport["width"],
+        viewport_height=viewport["height"],
         repeating_action_failure_th=options.repeating_action_failure_th,
     )
     step_records: list[dict[str, Any]] = []
 
     for step in range(1, options.max_steps + 1):
-        decision, before, action = adapter.decide(
-            task["intent"], state, reference_images
-        )
+        decision, action = adapter.decide(task["intent"], state, reference_images)
         audit = {
             "step": step,
             "decision": decision.model_dump(mode="json"),
@@ -82,30 +87,38 @@ def _run_agent_steps(
         trajectory.append(action)
         print(f"  step {step}: {decision.action.model_dump(mode='json')}", flush=True)
 
-        if isinstance(decision.action, DoneAction):
+        if isinstance(decision.action, StopAction):
             audit["executed"] = False
             break
 
         observation, _, terminated, truncated, info = env.step(action)
         after_state = {"observation": observation, "info": info}
-        execution = ExecutionResult(
-            ok=not bool(info.get("fail_error")),
-            message=info.get("fail_error", ""),
-        )
-        history_record = adapter.record(before, decision, execution, after_state)
+        execution_error = str(info.get("fail_error", "") or "")
+        execution = ExecutionResult(ok=not bool(execution_error))
+        history_record = adapter.record(decision, execution)
         audit.update(
             {
                 "executed": True,
                 "result": history_record.result.model_dump(mode="json"),
             }
         )
+        if execution_error:
+            # 상세 런타임 오류는 감사 로그에만 남기고 모델 이력에는 넣지 않는다.
+            audit["execution_error"] = execution_error
         state = after_state
         trajectory.append(state)
         if terminated or truncated:
-            trajectory.append(bindings.create_stop_action("Environment terminated"))
+            # VWA run.py appends an empty STOP placeholder when the environment
+            # terminates so the official evaluator still receives state/action
+            # alternation with an action in the final position.
+            trajectory.append(bindings.create_stop_action(""))
             break
     else:
-        trajectory.append(bindings.create_stop_action("Maximum steps reached"))
+        trajectory.append(
+            bindings.create_stop_action(
+                f"Early stop: Reach max steps {options.max_steps}"
+            )
+        )
 
     return trajectory, step_records, adapter.model_calls
 
@@ -120,8 +133,7 @@ def _score_task(
     trajectory: list[Any],
 ) -> float:
     """에이전트 입력과 분리된 VWA 공식 evaluator로 trajectory를 채점한다."""
-    eval_types = task["eval"]["eval_types"]
-    caption_fn = captioner.get() if "page_image_query" in eval_types else None
+    caption_fn = captioner.get()
     evaluator = bindings.evaluator_router(runtime_config, captioning_fn=caption_fn)
     return float(evaluator(trajectory, runtime_config, env.page))
 
@@ -152,6 +164,8 @@ def _execute_task(
         runtime_config=runtime_config,
         reference_images=reference_images,
     )
+    # HTML/image evaluators may navigate elsewhere while checking the result.
+    final_url = env.page.url
     score = _score_task(
         bindings=bindings,
         captioner=captioner,
@@ -170,7 +184,7 @@ def _execute_task(
         "model_calls": model_calls,
         "status": "pass" if score == 1.0 else "fail",
         "step_records": step_records,
-        "final_url": env.page.url,
+        "final_url": final_url,
     }
 
 

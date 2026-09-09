@@ -23,6 +23,8 @@ class VWABindings:
     create_key_press_action: Any
     create_scroll_action: Any
     create_stop_action: Any
+    create_go_back_action: Any
+    create_go_forward_action: Any
     renew_comb: Any
     evaluator_router: Any
     image_utils: Any
@@ -57,6 +59,20 @@ class BrowserEnvActionFactory:
         )
         return action
 
+    def hover(self, x: int, y: int) -> Any:
+        action = self.bindings.create_none_action()
+        action.update(
+            {
+                "action_type": self.bindings.action_types.MOUSE_HOVER,
+                "coords": np.array(
+                    [x / self.viewport_width, y / self.viewport_height],
+                    # VWA's beartyped hover executor rejects numpy.float32.
+                    dtype=np.float64,
+                ),
+            }
+        )
+        return action
+
     def type_text(self, text: str) -> Any:
         return self.bindings.create_keyboard_type_action(text)
 
@@ -65,6 +81,12 @@ class BrowserEnvActionFactory:
 
     def scroll(self, direction: str) -> Any:
         return self.bindings.create_scroll_action(direction)
+
+    def go_back(self) -> Any:
+        return self.bindings.create_go_back_action()
+
+    def go_forward(self) -> Any:
+        return self.bindings.create_go_forward_action()
 
     def stop(self, answer: str) -> Any:
         return self.bindings.create_stop_action(answer)
@@ -83,8 +105,6 @@ class EvaluationCaptioner:
             import torch
 
             device = self.requested_device
-            if device == "auto":
-                device = "cuda" if torch.cuda.is_available() else "cpu"
             if device == "cuda" and not torch.cuda.is_available():
                 raise RuntimeError(
                     "CUDA evaluator was requested, but torch.cuda.is_available() is false"
@@ -100,8 +120,7 @@ def load_vwa_bindings(vwa_root: Path) -> VWABindings:
     """Import only the VWA environment/auth/evaluator APIs used by this runner."""
     if not vwa_root.is_dir():
         raise RuntimeError(f"VisualWebArena checkout not found: {vwa_root}")
-    if str(vwa_root) not in sys.path:
-        sys.path.insert(0, str(vwa_root))
+    sys.path.insert(0, str(vwa_root))
 
     # VWA imports Hugging Face `evaluate` for StringSoftEvaluator, but its
     # evaluator_router cannot select that class. Config validation accepts only
@@ -124,6 +143,8 @@ def load_vwa_bindings(vwa_root: Path) -> VWABindings:
         create_none_action,
         create_scroll_action,
         create_stop_action,
+        create_go_back_action,
+        create_go_forward_action,
     )
     from browser_env.auto_login import renew_comb
     from evaluation_harness import evaluator_router, image_utils
@@ -136,6 +157,8 @@ def load_vwa_bindings(vwa_root: Path) -> VWABindings:
         create_key_press_action=create_key_press_action,
         create_scroll_action=create_scroll_action,
         create_stop_action=create_stop_action,
+        create_go_back_action=create_go_back_action,
+        create_go_forward_action=create_go_forward_action,
         renew_comb=renew_comb,
         evaluator_router=evaluator_router,
         image_utils=image_utils,
