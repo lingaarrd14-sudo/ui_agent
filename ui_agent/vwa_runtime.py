@@ -30,7 +30,7 @@ class VWABindings:
 
 
 class BrowserEnvActionFactory:
-    """Create low-level coordinate actions understood by VWA's browser_env."""
+    """Convert 0-1000 agent coordinates to VWA's 0-1 coordinate actions."""
 
     def __init__(
         self, bindings: VWABindings, viewport_width: int, viewport_height: int
@@ -50,8 +50,12 @@ class BrowserEnvActionFactory:
                 "action_type": self.bindings.action_types.MOUSE_CLICK,
                 # VWA low-level MOUSE_CLICK stores normalized coordinates and
                 # multiplies them by page.viewport_size during execution.
+                # Keep the 1000 edge inside the viewport's last pixel.
                 "coords": np.array(
-                    [x / self.viewport_width, y / self.viewport_height],
+                    [
+                        min(x / 1000, 1 - 1 / self.viewport_width),
+                        min(y / 1000, 1 - 1 / self.viewport_height),
+                    ],
                     dtype=np.float32,
                 ),
             }
@@ -64,7 +68,10 @@ class BrowserEnvActionFactory:
             {
                 "action_type": self.bindings.action_types.MOUSE_HOVER,
                 "coords": np.array(
-                    [x / self.viewport_width, y / self.viewport_height],
+                    [
+                        min(x / 1000, 1 - 1 / self.viewport_width),
+                        min(y / 1000, 1 - 1 / self.viewport_height),
+                    ],
                     # VWA's beartyped hover executor rejects numpy.float32.
                     dtype=np.float64,
                 ),

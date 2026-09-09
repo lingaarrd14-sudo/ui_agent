@@ -12,19 +12,19 @@ class StrictModel(BaseModel):
 
 
 class ClickAction(StrictModel):
-    """뷰포트의 절대 좌표를 클릭한다."""
+    """현재 화면의 0~1000 정규화 좌표를 클릭한다."""
 
     kind: Literal["click"]
-    x: int = Field(ge=0)
-    y: int = Field(ge=0)
+    x: int = Field(ge=0, le=1000, description="Normalized x: 0=left, 1000=right.")
+    y: int = Field(ge=0, le=1000, description="Normalized y: 0=top, 1000=bottom.")
 
 
 class HoverAction(StrictModel):
-    """뷰포트의 절대 좌표로 마우스를 이동한다."""
+    """현재 화면의 0~1000 정규화 좌표로 마우스를 이동한다."""
 
     kind: Literal["hover"]
-    x: int = Field(ge=0)
-    y: int = Field(ge=0)
+    x: int = Field(ge=0, le=1000, description="Normalized x: 0=left, 1000=right.")
+    y: int = Field(ge=0, le=1000, description="Normalized y: 0=top, 1000=bottom.")
 
 
 class TypeAction(StrictModel):

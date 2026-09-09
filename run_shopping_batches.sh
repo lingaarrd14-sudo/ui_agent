@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # 1. 실행 설정 (환경변수로 변경 가능)
-MODEL="${MODEL:-gpt-5.6-luna}"
+MODEL="${MODEL:-gemini-3.8-flash}"
 BATCH_SIZE="${BATCH_SIZE:-50}"
 MAX_STEPS="${MAX_STEPS:-30}"
 VIEWPORT_WIDTH="${VIEWPORT_WIDTH:-1280}"
@@ -13,7 +13,7 @@ SKIP_TASK_IDS=(284 319 345) # Shopping tasks that open Wikipedia.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${PYTHON:-$SCRIPT_DIR/.venv/bin/python}"
 VWA_ROOT="${VWA_ROOT:-$SCRIPT_DIR/../visualwebarena}"
-RESULT_ROOT="${RESULT_ROOT:-$SCRIPT_DIR/benchmark_results/shopping_${VIEWPORT_WIDTH}x${VIEWPORT_HEIGHT}_$(date +%Y%m%d_%H%M%S)}"
+RESULT_ROOT="${RESULT_ROOT:-$SCRIPT_DIR/benchmark_results/shopping_${MODEL}_${VIEWPORT_WIDTH}x${VIEWPORT_HEIGHT}_$(date +%Y%m%d_%H%M%S)}"
 TASK_CONFIG="$VWA_ROOT/config_files/vwa/test_shopping.raw.json"
 
 # 2. 실행 대상 수 계산: 다중 탭·별도 viewport·Wikipedia 태스크 제외

@@ -2,7 +2,7 @@
 
 VisualWebArena(VWA)의 Shopping task, 인증, 브라우저 환경, 공식 evaluator를 사용하는
 스크린샷 기반 웹 에이전트입니다. 실행 진입점은 `vwa_benchmark.py`입니다.
-VWA checkout은 프로젝트와 나란히 `../visualwebarena`에 있어야 합니다.
+VWA checkout 기본 경로는 `../visualwebarena`이며, 셸 환경변수 `VWA_ROOT`로 변경할 수 있습니다.
 
 ## 모델 입력과 액션
 
@@ -14,7 +14,7 @@ Reference image는 PNG로 변환해 별도의 이미지 입력으로 보냅니�
 
 | 액션 | 실행 의미 |
 | --- | --- |
-| `click`, `hover` | 화면 내 정수 픽셀 좌표를 VWA의 정규화된 좌표로 변환 |
+| `click`, `hover` | 0~1000 정수 좌표를 VWA의 0~1 좌표로 변환 |
 | `type` | 현재 포커스에 텍스트 추가. 기존 내용 삭제와 Enter는 별도 액션 |
 | `press` | `key_comb`에 지정한 키 조합 실행 |
 | `scroll` | `up`/`down`으로 약 한 화면 이동 |
@@ -94,7 +94,15 @@ MODEL=gpt-5.6-terra
 ```
 
 쉘에 이미 설정한 환경변수가 `.env`보다 우선합니다. 호환 gateway를 쓸 때는
-`OPENAI_BASE_URL`을 설정하세요. 이 값은 에이전트와 VWA LLM judge가 함께 사용합니다.
+`OPENAI_BASE_URL`을 설정하세요. OpenAI 에이전트와 VWA LLM judge가 이 값을 사용합니다.
+
+Gemini는 `.env`에 `GEMINI_API_KEY`를 설정하고 `--model gemini-3.8-flash`로
+선택합니다. `gemini-` 모델은 Google의 Chat Completions 호환 API를 사용하며,
+GPT와 Gemini 모두 click·hover에 0~1000 정수 좌표를 반환하며, 실행 이력에도 같은 단위를
+사용합니다. 화면 중심은 항상 `(500, 500)`이고, VWA에 전달할 때만 1000으로 나누어
+0~1로 변환합니다. 끝점 1000은 화면 밖을 클릭하지 않도록 마지막 픽셀로 제한합니다.
+VWA 평가용 `OPENAI_API_KEY`도 필요합니다.
+배치는 `MODEL=gemini-3.8-flash bash run_shopping_batches.sh`로 실행합니다.
 
 Shopping 주소 기본값은 `SHOPPING=http://localhost:7770`입니다. 필요하면 같은 이름의
 환경변수로 변경하세요. VWA Shopping 사이트는 별도로 구동해야 합니다.
@@ -163,7 +171,7 @@ Shopping의 상태 초기화는 별도 원본 스크립트가 필요합니다. �
 재시도합니다. 소스, 프롬프트, 모델 등 run metadata가 다르면 같은 결과 디렉터리
 재사용을 거절하므로 새 디렉터리를 지정해야 합니다.
 
-- `run_config.json`: Git 상태, 실행 소스 해시, 프롬프트, 모델, endpoint, 화면 크기와 선택 범위.
+- `run_config.json`: Git 상태, 실행 소스 해시, 프롬프트, 모델, endpoint, 좌표 단위, 화면 크기와 선택 범위.
 - `results.jsonl`: task별 시도를 추가 기록. 점수 1이면 `pass`, 그 외는 `fail`, 예외는 `error`.
 - `step_records`: 모델 결정과 실행 성공 여부. `steps`는 브라우저 실행 횟수이며 STOP은 제외.
 - `final_url`: evaluator가 페이지를 이동하기 전 에이전트가 끝낸 URL.

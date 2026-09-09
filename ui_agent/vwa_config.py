@@ -15,8 +15,7 @@ from PIL import Image
 
 
 UI_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = UI_ROOT.parent
-VWA_ROOT = WORKSPACE_ROOT / "visualwebarena"
+VWA_ROOT = Path(os.environ.get("VWA_ROOT", UI_ROOT.parent / "visualwebarena")).resolve()
 
 SITE_DEFAULTS = {
     "CLASSIFIEDS": "http://localhost:9980",
@@ -43,7 +42,9 @@ def load_local_environment() -> None:
     load_dotenv(UI_ROOT / ".env")
 
 
-def configure_environment(require_api_key: bool) -> tuple[str | None, str | None]:
+def configure_environment(
+    require_api_key: bool, model: str = ""
+) -> tuple[str | None, str | None]:
     """Establish VWA's documented site variables and return model credentials."""
     load_local_environment()
     for name, value in SITE_DEFAULTS.items():
@@ -59,10 +60,16 @@ def configure_environment(require_api_key: bool) -> tuple[str | None, str | None
             [str(VWA_ROOT), *python_paths]
         ).rstrip(os.pathsep)
 
-    api_key = os.environ.get("OPENAI_API_KEY")
+    is_gemini = model.startswith("gemini-")
+    key_name = "GEMINI_API_KEY" if is_gemini else "OPENAI_API_KEY"
+    api_key = os.environ.get(key_name)
     if require_api_key and not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured in ui_agent/.env")
-    base_url = os.environ.get("OPENAI_BASE_URL")
+        raise RuntimeError(f"{key_name} is not configured in ui_agent/.env")
+    # VWA 평가기의 OPENAI_* 환경설정은 그대로 두고 에이전트 인증만 선택한다.
+    base_url = (
+        "https://generativelanguage.googleapis.com/v1beta/openai/"
+        if is_gemini else os.environ.get("OPENAI_BASE_URL")
+    )
     return api_key, base_url
 
 

@@ -13,6 +13,15 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class ShoppingBatchTests(unittest.TestCase):
+    def test_python_uses_the_same_vwa_root_override_as_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "-c", "from ui_agent.vwa_config import VWA_ROOT; print(VWA_ROOT)"],
+                env={**os.environ, "VWA_ROOT": directory}, cwd=ROOT,
+                text=True, capture_output=True, check=True, timeout=30,
+            )
+            self.assertEqual(Path(result.stdout.strip()), Path(directory).resolve())
+
     def run_script(self, mode):
         python = shlex.quote(sys.executable)
         script = shlex.quote(str(ROOT / "run_shopping_batches.sh"))

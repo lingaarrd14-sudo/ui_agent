@@ -5,16 +5,13 @@ from typing import Protocol
 
 from .models import (
     Action,
-    ClickAction,
     Decision,
     ExecutionResult,
-    HoverAction,
     Observation,
     PressAction,
     StepRecord,
     StopAction,
     TypeAction,
-    ScrollAction,
 )
 
 
@@ -31,18 +28,7 @@ class VisionPolicy(Protocol):
     ) -> Decision: ...
 
 
-def is_equivalent(left: Action, right: Action) -> bool:
-    """VWA 액션 동등성처럼 같은 종류의 인자 없는 액션도 동일하게 본다."""
-    if isinstance(left, ScrollAction) and isinstance(right, ScrollAction):
-          return True
-    return left == right
-
-
-def validation_error(action: Action, observation: Observation) -> str | None:
-    if isinstance(action, (ClickAction, HoverAction)) and (
-        action.x >= observation.viewport_width or action.y >= observation.viewport_height
-    ):
-        return f"{action.kind} 좌표 ({action.x}, {action.y})가 뷰포트 밖입니다."
+def validation_error(action: Action) -> str | None:
     if isinstance(action, TypeAction) and not action.text:
         return "빈 문자열은 입력할 수 없습니다."
     if isinstance(action, PressAction) and not action.key_comb.strip():
@@ -82,7 +68,7 @@ class VisionAgentController:
             previous_observation=self.previous_observation,
         )
         self.previous_observation = observation
-        reason = validation_error(decision.action, observation)
+        reason = validation_error(decision.action)
         return self._blocked(reason) if reason else decision
 
     @staticmethod
@@ -100,7 +86,7 @@ class VisionAgentController:
     ) -> StepRecord:
         """실행 결과를 기록하고 화면 변화 판단은 다음 관찰에 맡긴다."""
         repeat_count = 1
-        if self.history and is_equivalent(self.history[-1].action, decision.action):
+        if self.history and self.history[-1].action == decision.action:
             repeat_count = self.history[-1].repeat_count + 1
         record = StepRecord(
             state_summary=decision.state_summary,

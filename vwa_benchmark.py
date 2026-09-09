@@ -104,6 +104,7 @@ def build_run_metadata(
         "agent": "ui_agent_vision_only",
         "observation": "raw_screenshot",
         "action_space": "single_page_screenshot_actions",
+        "action_coordinates": "normalized_0_1000",
         "excludes_multi_tab_tasks": True,
         "uses_som": False,
         "uses_agent_captioning": False,
@@ -127,7 +128,9 @@ def build_run_metadata(
 def run() -> int:
     load_local_environment()  # MODEL must be available before parse_args.
     args = parse_args()
-    api_key, base_url = configure_environment(require_api_key=not args.validate_only)
+    api_key, base_url = configure_environment(
+        require_api_key=not args.validate_only, model=args.model
+    )
     bindings = load_vwa_bindings(VWA_ROOT)
 
     result_dir = args.result_dir.resolve()

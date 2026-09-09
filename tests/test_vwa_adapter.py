@@ -27,7 +27,7 @@ from ui_agent.vwa_adapter import VisualWebArenaAdapter, decision_to_vwa_action
 from ui_agent.vwa_runtime import BrowserEnvActionFactory
 from ui_agent.vwa_results import persist_run_config, read_latest_results
 from ui_agent.vwa_tasks import _run_agent_steps, run_selected_tasks
-from vwa_benchmark import VWA_SLEEP_AFTER_EXECUTION, parse_args
+from vwa_benchmark import VWA_SLEEP_AFTER_EXECUTION, build_run_metadata, parse_args
 
 
 class FakeActionFactory:
@@ -147,6 +147,10 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
 
         self.assertEqual(VWA_SLEEP_AFTER_EXECUTION, 2.5)
         self.assertEqual(args.eval_caption_device, "cpu")
+        with patch("vwa_benchmark.site_urls", return_value=vwa_config.SITE_DEFAULTS):
+            metadata = build_run_metadata(args, {"tasks": 1}, None)
+        self.assertEqual(metadata["action_coordinates"], "normalized_0_1000")
+        self.assertIn("integer coordinates normalized to 0-1000", metadata["policy_instructions"])
 
     def test_generated_configs_keep_only_shopping_scope(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -250,23 +254,34 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
                 self.assertEqual(converted["kind"], expected_kind)
                 self.assertIn(f'"kind":"{expected_kind}"', converted["raw_prediction"])
 
-    def test_vwa_runtime_normalizes_pixel_click_coordinates(self):
-        factory = BrowserEnvActionFactory(
-            FakeVWABindings(), viewport_width=1280, viewport_height=2048
-        )
+    def test_vwa_runtime_normalizes_coordinates_independently_of_viewport(self):
+        for width, height in ((1280, 720), (640, 360), (430, 932)):
+            factory = BrowserEnvActionFactory(FakeVWABindings(), width, height)
+            for kind in ("click", "hover"):
+                with self.subTest(viewport=(width, height), kind=kind):
+                    action = getattr(factory, kind)(500, 250)
+                    self.assertEqual(action["action_type"], f"mouse_{kind}")
+                    np.testing.assert_allclose(action["coords"], [0.5, 0.25])
 
-        action = factory.click(640, 512)
-
-        self.assertEqual(action["action_type"], "mouse_click")
-        self.assertAlmostEqual(float(action["coords"][0]), 0.5)
-        self.assertAlmostEqual(float(action["coords"][1]), 0.25)
+    def test_vwa_runtime_keeps_coordinate_edges_inside_viewport(self):
+        for width, height in ((1280, 720), (640, 360), (1, 1)):
+            factory = BrowserEnvActionFactory(FakeVWABindings(), width, height)
+            for kind in ("click", "hover"):
+                for x, y in ((0, 0), (0, 1000), (1000, 0), (1000, 1000)):
+                    with self.subTest(viewport=(width, height), kind=kind, coords=(x, y)):
+                        coords = getattr(factory, kind)(x, y)["coords"]
+                        pixels = coords * [width, height]
+                        np.testing.assert_allclose(pixels,
+                            [width - 1 if x else 0, height - 1 if y else 0], atol=0.0001)
+                        self.assertTrue(np.all(pixels >= 0))
+                        self.assertTrue(np.all(pixels < [width, height]))
 
     def test_vwa_runtime_hover_coordinates_are_python_float_compatible(self):
         factory = BrowserEnvActionFactory(
             FakeVWABindings(), viewport_width=1280, viewport_height=720
         )
 
-        action = factory.hover(640, 360)
+        action = factory.hover(500, 500)
 
         self.assertIsInstance(action["coords"][0], float)
         self.assertIsInstance(action["coords"][1], float)
@@ -274,7 +289,7 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
     def test_adapter_uses_raw_image_and_records_execution(self):
         decision = Decision(
             state_summary="Target is visible",
-            action=ClickAction(kind="click", x=10, y=10),
+            action=ClickAction(kind="click", x=500, y=900),
             expected_outcome="Change the page",
         )
         adapter = VisualWebArenaAdapter(
@@ -289,6 +304,8 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
 
         self.assertEqual(action["kind"], "click")
         self.assertTrue(record.result.ok)
+        self.assertEqual(record.action, decision.action)
+        self.assertEqual(json.loads(action["raw_prediction"])["action"], decision.action.model_dump())
 
     def test_adapter_ignores_url_from_detached_page_snapshot(self):
         decision = Decision(
