@@ -9,16 +9,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import numpy as np
 from PIL import Image
 
-from ui_agent.models import ClickAction, Decision, StopAction
+from ui_agent.models import Decision, StopAction
 from ui_agent.vwa_adapter import decision_to_vwa_action
 from ui_agent.vwa_config import (
-    DOMAIN_SOURCES, SITE_DEFAULTS, VWA_ROOT, configure_environment, generate_configs,
+    SHOPPING_SOURCE,
+    SITE_DEFAULTS,
+    VWA_ROOT,
+    configure_environment,
+    generate_configs,
 )
 from ui_agent.vwa_runtime import BrowserEnvActionFactory, load_vwa_bindings
-from ui_agent.vwa_tasks import _run_agent_steps, _score_task
+from ui_agent.vwa_tasks import _score_task
 
 
 class OfficialEvaluationTests(unittest.TestCase):
@@ -52,7 +55,7 @@ class OfficialEvaluationTests(unittest.TestCase):
         ), self.factory)
         return _score_task(
             bindings=self.bindings, captioner=self.captioner, env=self.env,
-            task=task, runtime_config=self.config,
+            runtime_config=self.config,
             trajectory=[{"observation": {}, "info": {}}, action],
         )
 
@@ -63,24 +66,28 @@ class OfficialEvaluationTests(unittest.TestCase):
 
     def test_generated_unachievable_tasks_keep_references_and_accept_na(self):
         with patch("ui_agent.vwa_config.site_urls", return_value=SITE_DEFAULTS):
-            configs = generate_configs(Path(self.temp.name), list(DOMAIN_SOURCES))
+            configs = generate_configs(Path(self.temp.name))
         checked = 0
-        for domain, paths in configs.items():
-            raw = json.loads((VWA_ROOT / "config_files" / "vwa" / DOMAIN_SOURCES[domain]).read_text())
-            originals = {task["task_id"]: task for task in raw}
-            for path in paths:
-                task = json.loads(path.read_text())
-                refs = task["eval"].get("reference_answers") or {}
-                if refs.get("fuzzy_match") != "N/A":
-                    continue
-                with self.subTest(domain=domain, task_id=task["task_id"]):
-                    original = originals[task["task_id"]]["eval"]
-                    self.assertEqual(refs, original["reference_answers"])
-                    self.assertEqual(task["eval"]["string_note"], original["string_note"])
-                    with patch.object(self.helpers, "generate_from_openai_chat_completion",
-                                      side_effect=AssertionError("N/A must not call a judge")):
-                        self.assertEqual(self.score(task["eval"], "N/A"), 1.0)
-                    checked += 1
+        raw = json.loads(
+            (VWA_ROOT / "config_files" / "vwa" / SHOPPING_SOURCE).read_text()
+        )
+        originals = {task["task_id"]: task for task in raw}
+        for path in configs:
+            task = json.loads(path.read_text())
+            refs = task["eval"].get("reference_answers") or {}
+            if refs.get("fuzzy_match") != "N/A":
+                continue
+            with self.subTest(task_id=task["task_id"]):
+                original = originals[task["task_id"]]["eval"]
+                self.assertEqual(refs, original["reference_answers"])
+                self.assertEqual(task["eval"]["string_note"], original["string_note"])
+                with patch.object(
+                    self.helpers,
+                    "generate_from_openai_chat_completion",
+                    side_effect=AssertionError("N/A must not call a judge"),
+                ):
+                    self.assertEqual(self.score(task["eval"], "N/A"), 1.0)
+                checked += 1
         self.assertGreater(checked, 0)
 
     def test_unachievable_reason_uses_original_judge_fallback(self):
@@ -165,31 +172,6 @@ class OfficialEvaluationTests(unittest.TestCase):
         )):
             self.assertEqual(self.score(evaluation), 1.0)
         self.assertEqual(caption_fn.call_args.args[1], ["Q: What color? A:"])
-
-    def test_task_viewport_override_controls_observation_and_coordinates(self):
-        current = {"image": np.zeros((40, 60, 3), dtype=np.uint8)}
-        env = SimpleNamespace(
-            reset=Mock(return_value=(current, {})),
-            step=Mock(return_value=(current, 0, True, False, {})),
-        )
-        policy = Mock()
-        policy.decide.return_value = Decision(
-            state_summary="Target is visible",
-            action=ClickAction(kind="click", x=45, y=30),
-            expected_outcome="Click",
-        )
-        trajectory, _, _ = _run_agent_steps(
-            options=SimpleNamespace(viewport_width=30, viewport_height=20,
-                                    max_steps=2, repeating_action_failure_th=5),
-            bindings=self.bindings, policy=policy, action_factory=self.factory, env=env,
-            task={"intent": "goal", "viewport_size": {"width": 60, "height": 40}},
-            runtime_config=self.config, reference_images=[],
-        )
-        observation = policy.decide.call_args.args[1]
-        self.assertEqual((observation.viewport_width, observation.viewport_height), (60, 40))
-        np.testing.assert_allclose(trajectory[1]["coords"], [0.75, 0.75])
-        self.assertEqual(trajectory[-1]["action_type"], self.bindings.action_types.STOP)
-
 
 if __name__ == "__main__":
     unittest.main()

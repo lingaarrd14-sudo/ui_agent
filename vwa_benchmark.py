@@ -1,7 +1,7 @@
 """Run the vision-only UI agent on VisualWebArena without modifying VWA.
 
 VisualWebArena supplies task data, authentication, browser execution, and the
-official evaluator. The agent receives only the current raw screenshot,
+official evaluator. The agent receives the current and previous raw screenshots,
 viewport, recent executed actions, and task-provided reference images. It never
 receives SoM marks, accessibility-tree text, or generated captions.
 """
@@ -18,7 +18,8 @@ from openai import OpenAI
 
 from ui_agent.policy import INSTRUCTIONS, OpenAIVisionPolicy
 from ui_agent.vwa_config import (
-    DOMAIN_SOURCES,
+    SHOPPING_DOMAIN,
+    SHOPPING_EXCLUDED_TASK_IDS,
     UI_ROOT,
     VWA_ROOT,
     configure_environment,
@@ -48,16 +49,8 @@ VWA_SLEEP_AFTER_EXECUTION = 2.5
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--domain", choices=["all", *DOMAIN_SOURCES], default="all")
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int)
-    parser.add_argument(
-        "--exclude-task-ids",
-        type=int,
-        nargs="*",
-        default=[],
-        help="Task IDs to remove before applying --start/--end.",
-    )
     parser.add_argument("--max-steps", type=int, default=15)
     parser.add_argument("--repeating-action-failure-th", type=int, default=5)
     parser.add_argument("--model", default=os.environ.get("MODEL", "gpt-5.6-terra"))
@@ -82,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=UI_ROOT
         / "benchmark_results"
-        / f"vwa_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        / f"shopping_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
     )
     args = parser.parse_args()
     if args.start < 0:
@@ -100,7 +93,6 @@ def parse_args() -> argparse.Namespace:
 
 def build_run_metadata(
     args: argparse.Namespace,
-    domains: list[str],
     validation: dict[str, int],
     base_url: str | None,
 ) -> dict[str, Any]:
@@ -123,10 +115,10 @@ def build_run_metadata(
         "sleep_after_execution": VWA_SLEEP_AFTER_EXECUTION,
         "eval_caption_device": args.eval_caption_device,
         "viewport": [args.viewport_width, args.viewport_height],
-        "domains": domains,
+        "domain": SHOPPING_DOMAIN,
         "start": args.start,
         "end": args.end,
-        "excluded_task_ids": sorted(set(args.exclude_task_ids)),
+        "excluded_task_ids": sorted(SHOPPING_EXCLUDED_TASK_IDS),
         "site_urls": site_urls(),
         "validation": validation,
     }
@@ -138,15 +130,12 @@ def run() -> int:
     api_key, base_url = configure_environment(require_api_key=not args.validate_only)
     bindings = load_vwa_bindings(VWA_ROOT)
 
-    domains = list(DOMAIN_SOURCES) if args.domain == "all" else [args.domain]
     result_dir = args.result_dir.resolve()
     result_dir.mkdir(parents=True, exist_ok=True)
-    generated = generate_configs(result_dir, domains)
-    selected = task_selection(
-        generated, args.start, args.end, set(args.exclude_task_ids)
-    )
+    generated = generate_configs(result_dir)
+    selected = task_selection(generated, args.start, args.end)
     validation = validate_selection(selected)
-    metadata = build_run_metadata(args, domains, validation, base_url)
+    metadata = build_run_metadata(args, validation, base_url)
     persist_run_config(result_dir, metadata)
 
     if validation["requires_reset"]:
@@ -166,7 +155,7 @@ def run() -> int:
         return 0
 
     assert api_key is not None
-    ensure_auth(result_dir / "auth", domains, args.refresh_auth, bindings.renew_comb)
+    ensure_auth(result_dir / "auth", args.refresh_auth, bindings.renew_comb)
     client_options: dict[str, Any] = {
         "api_key": api_key,
         "timeout": 180.0,
@@ -207,7 +196,8 @@ def run() -> int:
         env.close()
 
     summary = write_summary(result_dir, results_path, total_planned)
-    return 1 if summary["errors"] else 0
+    # Distinguish completed batches with task errors from fatal setup failures.
+    return 2 if summary["errors"] else 0
 
 
 if __name__ == "__main__":

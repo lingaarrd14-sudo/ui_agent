@@ -1,6 +1,6 @@
 # UI Agent
 
-VisualWebArena(VWA)의 task, 인증, 브라우저 환경, 공식 evaluator를 사용하는
+VisualWebArena(VWA)의 Shopping task, 인증, 브라우저 환경, 공식 evaluator를 사용하는
 스크린샷 기반 웹 에이전트입니다. 실행 진입점은 `vwa_benchmark.py`입니다.
 VWA checkout은 프로젝트와 나란히 `../visualwebarena`에 있어야 합니다.
 
@@ -59,31 +59,19 @@ import해 최종 trajectory, runtime config, 실제 페이지로 실행합니다
 
 여러 평가가 지정되면 원본처럼 점수를 곱합니다. 불가능 정답의 정확한 `N/A`는
 LLM 호출 없이 통과하고, 설명형 답변은 원본의 불가능 사유 비교 LLM으로 평가합니다.
-BLIP-2는 VQA가 필요한 task에서만 로드합니다. 기본 CPU이며
+BLIP-2 평가 함수는 첫 점수 계산 때 한 번 로드해 전체 run에서 재사용합니다. 기본 CPU이며
 `--eval-caption-device cuda`로 변경할 수 있습니다. 평가용 모델과 캡션은 에이전트
 입력에 들어가지 않습니다. `--model`은 에이전트 모델만 바꾸며, LLM judge 모델은
 로컬 VWA의 `evaluation_harness/helper_functions.py` 설정을 따릅니다.
 
 ## 실행 대상
 
-원본 `config_files/vwa/test_<domain>.raw.json`을 읽어 결과 디렉터리에 실행용
-config를 생성합니다. 여러 시작 URL이 `|AND|`로 연결된 task는 모든 도메인에서
-제외하고, Shopping에서는 `viewport_size` 지정 task도 제외합니다.
-Classifieds의 화면 크기 지정 task는 유지하며, 모델 좌표계와 액션 변환에도
-그 task의 크기를 적용합니다.
+원본 `config_files/vwa/test_shopping.raw.json`을 읽어 결과 디렉터리에 실행용
+config를 생성합니다. 다중 탭 task, `viewport_size` 지정 task, Wikipedia 관련
+task ID `284 319 345`를 제외하며 현재 로컬 task 파일 기준 실행 대상은 405개입니다.
 
-현재 로컬 task 파일 기준:
-
-| 도메인 | 원본 task | 기본 실행 대상 |
-| --- | ---: | ---: |
-| Classifieds | 234 | 219 |
-| Reddit | 210 | 170 |
-| Shopping | 466 | 406 |
-
-`--exclude-task-ids`를 추가로 제거한 뒤 `--start`/`--end`의 반열린 구간
-`[start, end)`를 적용합니다. 이 값은 task ID가 아닌 필터링된 목록의 위치입니다.
-`--domain all`에서는 같은 구간을 각 도메인에 적용합니다.
-`--end`를 생략하면 해당 도메인의 남은 대상을 모두 선택합니다.
+`--start`/`--end`는 필터링된 목록에 적용하는 반열린 구간 `[start, end)`입니다.
+이 값은 task ID가 아니며, `--end`를 생략하면 남은 대상을 모두 선택합니다.
 
 ## 설치와 설정
 
@@ -108,10 +96,8 @@ MODEL=gpt-5.6-terra
 쉘에 이미 설정한 환경변수가 `.env`보다 우선합니다. 호환 gateway를 쓸 때는
 `OPENAI_BASE_URL`을 설정하세요. 이 값은 에이전트와 VWA LLM judge가 함께 사용합니다.
 
-사이트 주소 기본값은 `CLASSIFIEDS=http://localhost:9980`,
-`SHOPPING=http://localhost:7770`, `REDDIT=http://localhost:9999`,
-`WIKIPEDIA=http://localhost:8888`, `HOMEPAGE=http://localhost:4399`입니다.
-필요하면 같은 이름의 환경변수로 변경하세요. VWA 사이트는 별도로 구동해야 합니다.
+Shopping 주소 기본값은 `SHOPPING=http://localhost:7770`입니다. 필요하면 같은 이름의
+환경변수로 변경하세요. VWA Shopping 사이트는 별도로 구동해야 합니다.
 
 ## 실행
 
@@ -120,23 +106,23 @@ VWA evaluator import가 API client를 만들기 때문에 `OPENAI_API_KEY`는 �
 원격 사이트 접속과 이미지 다운로드 성공 여부까지 확인하지는 않습니다.
 
 ```bash
-python vwa_benchmark.py --domain reddit --end 1 \
-  --result-dir benchmark_results/reddit_validate --validate-only
+python vwa_benchmark.py --end 1 \
+  --result-dir benchmark_results/shopping_validate --validate-only
 ```
 
 한 task 실행:
 
 ```bash
-python vwa_benchmark.py --domain reddit --end 1 --max-steps 15 \
-  --result-dir benchmark_results/reddit_smoke
+python vwa_benchmark.py --end 1 --max-steps 15 \
+  --result-dir benchmark_results/shopping_smoke
 ```
 
-필터링된 Reddit 전체 170개 실행:
+필터링된 Shopping 전체 405개를 한 번에 실행:
 
 ```bash
-python vwa_benchmark.py --domain reddit --max-steps 30 \
+python vwa_benchmark.py --max-steps 30 \
   --viewport-width 1280 --viewport-height 720 \
-  --result-dir benchmark_results/reddit_1280x720
+  --result-dir benchmark_results/shopping_1280x720
 ```
 
 기본은 headless입니다. `--headed`로 창을 표시하고 `--save-traces`로
@@ -148,11 +134,27 @@ Shopping 배치 실행은 `bash run_shopping_batches.sh`를 사용합니다. 이
 `MODEL`, `BATCH_SIZE`, `MAX_STEPS`, `VIEWPORT_WIDTH`, `VIEWPORT_HEIGHT`,
 `RESULT_ROOT`를 환경변수로 바꿀 수 있습니다.
 
+SH는 실행 설정을 검증한 뒤 원본 스크립트로 초기화하고, 인증을 새로 만듭니다.
+별도의 사이트 준비 대기 루프는 없습니다. 개별 task 오류는 기록하고 다음 배치로
+진행합니다. 초기화·로그인·설정
+실패는 즉시 중단합니다. 모든 배치를 끝냈어도 task 오류가 남으면 종료 코드는 2입니다.
+
+중단 후에는 같은 설정과 `RESULT_ROOT`로 다시 실행하세요.
+
+```bash
+MODEL=gpt-5.6-luna RESULT_ROOT=benchmark_results/shopping_full bash run_shopping_batches.sh
+```
+
+최초 실행과 재시작에 같은 명령을 사용합니다. 이미 채점된 task는 성공·실패 모두
+건너뛰고, 오류·미완료 task만 처음부터 재실행합니다. 중단된 task의 중간 단계부터
+이어가지는 않습니다. 재시작할 때도 배치별 사이트 초기화와 인증 갱신을 수행하므로
+이전 task가 바꾼 사이트 상태는 복원되지 않습니다. `RESULT_ROOT`를 생략하면 매번
+새 결과 폴더가 생성되어 이어서 실행되지 않습니다. 배치 크기도 동일하게 유지하세요.
+
 ## 사이트 상태와 결과
 
-VWA 환경은 `require_reset`이 지정된 Classifieds task에서 사이트 reset API를
-호출합니다. Shopping/Reddit의 상태 초기화는 별도 원본 스크립트가 필요합니다.
-비교 실험에서는 같은 초기 상태와 같은 배치 경계를 사용하세요.
+Shopping의 상태 초기화는 별도 원본 스크립트가 필요합니다. 비교 실험에서는
+같은 초기 상태와 같은 배치 경계를 사용하세요.
 인증 상태는 결과 디렉터리에 생성해 재사용하며 `--refresh-auth`로 갱신합니다.
 인증 갱신은 사이트 데이터 초기화와 별개입니다.
 
@@ -169,10 +171,11 @@ VWA 환경은 `require_reset`이 지정된 Classifieds task에서 사이트 rese
   시도 task 수, `score_planned`는 전체 계획 task 수를 분모로 사용.
 
 ```bash
-python summarize_benchmark.py benchmark_results/reddit_1280x720
+python summarize_benchmark.py benchmark_results/shopping_1280x720
 ```
 
-runner 종료 코드는 오류 task가 있으면 1, 없으면 0입니다. 평가상 `fail`만 있는
+runner 종료 코드는 배치를 마쳤지만 오류 task가 있으면 2, 없으면 0입니다.
+처리되지 않은 설정·실행 준비 예외는 1로 종료합니다. 평가상 `fail`만 있는
 경우에도 0을 반환합니다. `model_calls`는 정책 요청 횟수이며 SDK 내부 재시도 횟수나
 평가용 LLM 호출 횟수는 포함하지 않습니다.
 
@@ -188,7 +191,7 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 테스트는 API, 브라우저, Docker를 실행하지 않습니다. `test_vwa_evaluation.py`는
-로컬 VWA를 직접 import해 문자열, 불가능 사유 비교, URL/HTML 조합, 이미지 SSIM/VQA,
-task 화면 크기 적용을 확인합니다. 선택 대상의 불가능 task 44개도 `N/A` 채점과
+로컬 VWA를 직접 import해 문자열, 불가능 사유 비교, URL/HTML 조합과 이미지 SSIM/VQA를
+확인합니다. 선택 대상의 불가능 Shopping task 29개도 `N/A` 채점과
 정답 설정 보존을 검사합니다. 외부 LLM 응답·이미지 다운로드·VQA 추론은 mock하므로
 실제 사이트 상태나 모델의 불가능 판단 정확도를 검증하는 테스트는 아닙니다.

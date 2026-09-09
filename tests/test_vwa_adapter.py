@@ -96,13 +96,6 @@ class FakePage:
         self.url = url
 
 
-class FakeDetachedPage:
-    """VWA가 observation info에 넣는 context 없는 page snapshot."""
-
-    def __init__(self, url="https://example.com"):
-        self.url = url
-
-
 class FakeTaskEnvironment:
     def __init__(self):
         self.page = FakePage()
@@ -128,7 +121,7 @@ class FakeTerminatingEnvironment(FakeTaskEnvironment):
 def state(color=255, url="https://example.com", failure=""):
     return {
         "observation": {"image": np.full((20, 30, 3), color, dtype=np.uint8)},
-        "info": {"page": FakeDetachedPage(url), "fail_error": failure},
+        "info": {"page": FakePage(url), "fail_error": failure},
     }
 
 
@@ -155,7 +148,7 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
         self.assertEqual(VWA_SLEEP_AFTER_EXECUTION, 2.5)
         self.assertEqual(args.eval_caption_device, "cpu")
 
-    def test_generated_configs_exclude_viewport_and_multi_tab_tasks(self):
+    def test_generated_configs_keep_only_shopping_scope(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source_dir = root / "config_files" / "vwa"
@@ -183,6 +176,12 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
                             "start_url": "__SHOPPING__/a |AND| __SHOPPING__/b",
                             "eval": {"eval_types": []},
                         },
+                        {
+                            "task_id": 319,
+                            "intent": "exclude Wikipedia-related task",
+                            "start_url": "__SHOPPING__/",
+                            "eval": {"eval_types": []},
+                        },
                     ]
                 ),
                 encoding="utf-8",
@@ -190,27 +189,23 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
 
             with (
                 patch.object(vwa_config, "VWA_ROOT", root),
-                patch.dict(vwa_config.DOMAIN_SOURCES, {"shopping": "tasks.json"}),
+                patch.object(vwa_config, "SHOPPING_SOURCE", "tasks.json"),
                 patch.object(
                     vwa_config, "site_urls", return_value=vwa_config.SITE_DEFAULTS
                 ),
             ):
-                generated = vwa_config.generate_configs(
-                    root / "results", ["shopping"]
-                )
+                generated = vwa_config.generate_configs(root / "results")
 
-            self.assertEqual([path.name for path in generated["shopping"]], ["2.json"])
-            self.assertEqual(json.loads(generated["shopping"][0].read_text())["task_id"], 2)
+            self.assertEqual([path.name for path in generated], ["2.json"])
+            self.assertEqual(json.loads(generated[0].read_text())["task_id"], 2)
             self.assertIn("viewport_size", json.loads(source.read_text())[0])
 
-    def test_task_selection_excludes_ids_before_batching(self):
+    def test_task_selection_applies_range(self):
         paths = [Path(f"{task_id}.json") for task_id in range(5)]
 
-        selected = vwa_config.task_selection(
-            {"shopping": paths}, start=1, end=3, excluded_task_ids={1, 3}
-        )
+        selected = vwa_config.task_selection(paths, start=1, end=3)
 
-        self.assertEqual([path.name for _, path in selected], ["2.json", "4.json"])
+        self.assertEqual([path.name for path in selected], ["1.json", "2.json"])
 
     def test_decision_schema_accepts_benchmark_answer(self):
         decision = Decision(
@@ -325,8 +320,8 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "results.jsonl"
             records = [
-                {"domain": "reddit", "task_id": 0, "score": None},
-                {"domain": "reddit", "task_id": 0, "score": 1.0},
+                {"domain": "shopping", "task_id": 0, "score": None},
+                {"domain": "shopping", "task_id": 0, "score": 1.0},
             ]
             path.write_text(
                 "\n".join(json.dumps(record) for record in records),
@@ -335,7 +330,7 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
 
             latest = read_latest_results(path)
 
-            self.assertEqual(latest[("reddit", 0)]["score"], 1.0)
+            self.assertEqual(latest[("shopping", 0)]["score"], 1.0)
 
     def test_task_runner_persists_official_score_for_stop_action(self):
         decision = Decision(
@@ -374,14 +369,47 @@ class VisualWebArenaPolicyTests(unittest.TestCase):
                 captioner=FakeCaptioner(),
                 env=FakeTaskEnvironment(),
                 result_dir=result_dir,
-                selected=[("reddit", config_path)],
+                selected=[config_path],
             )
 
             latest = read_latest_results(result_dir / "results.jsonl")
-            self.assertEqual(latest[("reddit", 7)]["score"], 1.0)
-            self.assertEqual(latest[("reddit", 7)]["steps"], 0)
-            self.assertEqual(latest[("reddit", 7)]["final_url"], "https://example.com")
+            self.assertEqual(latest[("shopping", 7)]["score"], 1.0)
+            self.assertEqual(latest[("shopping", 7)]["steps"], 0)
+            self.assertEqual(
+                latest[("shopping", 7)]["final_url"], "https://example.com"
+            )
             self.assertEqual(bindings.trajectory[-1]["kind"], "stop")
+
+    def test_resume_skips_pass_and_fail_but_retries_error_and_pending_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result_dir = Path(directory)
+            selected = []
+            for task_id in range(4):
+                path = result_dir / f"{task_id}.json"
+                path.write_text(json.dumps({"task_id": task_id, "intent": "goal"}))
+                selected.append(path)
+            results_path = result_dir / "results.jsonl"
+            results_path.write_text("".join(
+                json.dumps({"domain": "shopping", "task_id": task_id, "score": score})
+                + "\n" for task_id, score in enumerate([1.0, 0.0, None])
+            ))
+            with patch("ui_agent.vwa_tasks._execute_task", return_value={
+                "score": 1.0, "status": "pass",
+            }) as execute:
+                run_selected_tasks(
+                    options=SimpleNamespace(), bindings=FakeTaskBindings(),
+                    policy=None, action_factory=FakeActionFactory(),
+                    captioner=FakeCaptioner(), env=FakeTaskEnvironment(),
+                    result_dir=result_dir, selected=selected,
+                )
+            self.assertEqual(
+                [call.kwargs["task"]["task_id"] for call in execute.call_args_list],
+                [2, 3],
+            )
+            latest = read_latest_results(results_path)
+            self.assertEqual(len(latest), 4)
+            self.assertEqual(latest[("shopping", 1)]["score"], 0.0)
+            self.assertEqual(latest[("shopping", 2)]["score"], 1.0)
 
     def test_unachievable_na_stops_without_execution(self):
         decision = Decision(

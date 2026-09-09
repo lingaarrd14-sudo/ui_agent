@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from .models import ExecutionResult, StopAction
 from .policy import OpenAIVisionPolicy
 from .vwa_adapter import VisualWebArenaAdapter, pil_to_base64
-from .vwa_config import load_reference_images
+from .vwa_config import SHOPPING_DOMAIN, load_reference_images
 from .vwa_results import (
     append_jsonl,
     read_latest_results,
@@ -30,14 +30,12 @@ class BenchmarkOptions(Protocol):
     save_traces: bool
 
 
-def _write_runtime_config(
-    result_dir: Path, domain: str, task: dict[str, Any]
-) -> Path:
+def _write_runtime_config(result_dir: Path, task: dict[str, Any]) -> Path:
     """생성된 task에 run 전용 인증 상태 경로를 추가한다."""
     task["storage_state"] = str(
-        (result_dir / "auth" / f"{domain}_state.json").resolve()
+        (result_dir / "auth" / "shopping_state.json").resolve()
     )
-    runtime_dir = result_dir / "runtime_configs" / domain
+    runtime_dir = result_dir / "runtime_configs" / SHOPPING_DOMAIN
     runtime_dir.mkdir(parents=True, exist_ok=True)
     runtime_config = runtime_dir / f"{task['task_id']}.json"
     runtime_config.write_text(
@@ -61,18 +59,11 @@ def _run_agent_steps(
     observation, info = env.reset(options={"config_file": str(runtime_config)})
     state: dict[str, Any] = {"observation": observation, "info": info}
     trajectory: list[Any] = [state]
-    viewport = {"width": options.viewport_width, "height": options.viewport_height}
-    viewport.update(task.get("viewport_size", {}))
-    if task.get("viewport_size"):
-        # VWA applies task overrides on reset (including Classifieds tasks).
-        action_factory = BrowserEnvActionFactory(
-            bindings, viewport["width"], viewport["height"]
-        )
     adapter = VisualWebArenaAdapter(
         policy=policy,
         action_factory=action_factory,
-        viewport_width=viewport["width"],
-        viewport_height=viewport["height"],
+        viewport_width=options.viewport_width,
+        viewport_height=options.viewport_height,
         repeating_action_failure_th=options.repeating_action_failure_th,
     )
     step_records: list[dict[str, Any]] = []
@@ -128,7 +119,6 @@ def _score_task(
     bindings: VWABindings,
     captioner: EvaluationCaptioner,
     env: Any,
-    task: dict[str, Any],
     runtime_config: Path,
     trajectory: list[Any],
 ) -> float:
@@ -147,7 +137,6 @@ def _execute_task(
     captioner: EvaluationCaptioner,
     env: Any,
     result_dir: Path,
-    domain: str,
     task: dict[str, Any],
     runtime_config: Path,
 ) -> dict[str, Any]:
@@ -170,12 +159,11 @@ def _execute_task(
         bindings=bindings,
         captioner=captioner,
         env=env,
-        task=task,
         runtime_config=runtime_config,
         trajectory=trajectory,
     )
     if options.save_traces:
-        trace_dir = result_dir / "traces" / domain
+        trace_dir = result_dir / "traces" / SHOPPING_DOMAIN
         trace_dir.mkdir(parents=True, exist_ok=True)
         env.save_trace(trace_dir / f"{task['task_id']}.zip")
     return {
@@ -197,7 +185,7 @@ def run_selected_tasks(
     captioner: EvaluationCaptioner,
     env: Any,
     result_dir: Path,
-    selected: list[tuple[str, Path]],
+    selected: list[Path],
 ) -> None:
     """미완료 task를 순서대로 실행하고 각 시도 결과를 즉시 저장한다."""
     results_path = result_dir / "results.jsonl"
@@ -208,17 +196,20 @@ def run_selected_tasks(
     }
     total_planned = len(selected)
 
-    for position, (domain, config_path) in enumerate(selected, start=1):
+    for position, config_path in enumerate(selected, start=1):
         task = json.loads(config_path.read_text(encoding="utf-8"))
         task_id = int(task["task_id"])
-        if (domain, task_id) in completed:
-            print(f"[{position}/{total_planned}] skip {domain}/{task_id}", flush=True)
+        if (SHOPPING_DOMAIN, task_id) in completed:
+            print(
+                f"[{position}/{total_planned}] skip {SHOPPING_DOMAIN}/{task_id}",
+                flush=True,
+            )
             continue
 
-        runtime_config = _write_runtime_config(result_dir, domain, task)
+        runtime_config = _write_runtime_config(result_dir, task)
         started = time.monotonic()
         record: dict[str, Any] = {
-            "domain": domain,
+            "domain": SHOPPING_DOMAIN,
             "task_id": task_id,
             "intent": task["intent"],
             "score": None,
@@ -227,7 +218,7 @@ def run_selected_tasks(
             "status": "error",
         }
         print(
-            f"[{position}/{total_planned}] {domain}/{task_id}: {task['intent']}",
+            f"[{position}/{total_planned}] {SHOPPING_DOMAIN}/{task_id}: {task['intent']}",
             flush=True,
         )
         try:
@@ -240,7 +231,6 @@ def run_selected_tasks(
                     captioner=captioner,
                     env=env,
                     result_dir=result_dir,
-                    domain=domain,
                     task=task,
                     runtime_config=runtime_config,
                 )

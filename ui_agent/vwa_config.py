@@ -26,11 +26,9 @@ SITE_DEFAULTS = {
     "HOMEPAGE": "http://localhost:4399",
 }
 CLASSIFIEDS_RESET_TOKEN = "4b61655535e7ed388f0d40a93600254c"
-DOMAIN_SOURCES = {
-    "classifieds": "test_classifieds.raw.json",
-    "reddit": "test_reddit.raw.json",
-    "shopping": "test_shopping.raw.json",
-}
+SHOPPING_DOMAIN = "shopping"
+SHOPPING_SOURCE = "test_shopping.raw.json"
+SHOPPING_EXCLUDED_TASK_IDS = {284, 319, 345}
 SUPPORTED_EVAL_TYPES = {
     "string_match",
     "url_match",
@@ -103,67 +101,56 @@ def _resolve_image_spec(image_spec: str | list[str]) -> str | list[str]:
     return resolved[0] if isinstance(image_spec, str) else resolved
 
 
-def generate_configs(result_dir: Path, domains: Sequence[str]) -> dict[str, list[Path]]:
-    """Materialize executable configs outside the VWA checkout."""
-    generated: dict[str, list[Path]] = {}
-    for domain in domains:
-        source = VWA_ROOT / "config_files" / "vwa" / DOMAIN_SOURCES[domain]
-        tasks = replace_placeholders(json.loads(source.read_text(encoding="utf-8")))
-        output_dir = result_dir / "configs" / domain
-        output_dir.mkdir(parents=True, exist_ok=True)
-        paths: list[Path] = []
-        for task in tasks:
-            # Raw page screenshots do not expose the browser tab strip, so tasks
-            # that begin with multiple pages are outside this agent's observation.
-            if MULTI_TAB_SEPARATOR in task.get("start_url", ""):
-                continue
-            # Viewport-controlled experiments use only tasks that do not
-            # prescribe their own browser dimensions.
-            if domain == "shopping" and "viewport_size" in task:
-                continue
-            image_spec = task.get("image")
-            if image_spec:
-                task["image"] = _resolve_image_spec(image_spec)
-            path = output_dir / f"{task['task_id']}.json"
-            path.write_text(
-                json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            paths.append(path)
-        generated[domain] = paths
-    return generated
+def generate_configs(result_dir: Path) -> list[Path]:
+    """Shopping task 중 현재 screenshot-only 범위의 실행 config를 만든다."""
+    source = VWA_ROOT / "config_files" / "vwa" / SHOPPING_SOURCE
+    tasks = replace_placeholders(json.loads(source.read_text(encoding="utf-8")))
+    output_dir = result_dir / "configs" / SHOPPING_DOMAIN
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for task in tasks:
+        if task["task_id"] in SHOPPING_EXCLUDED_TASK_IDS:
+            continue
+        if MULTI_TAB_SEPARATOR in task.get("start_url", ""):
+            continue
+        if "viewport_size" in task:
+            continue
+        image_spec = task.get("image")
+        if image_spec:
+            task["image"] = _resolve_image_spec(image_spec)
+        path = output_dir / f"{task['task_id']}.json"
+        path.write_text(
+            json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        paths.append(path)
+    return paths
 
 
 def task_selection(
-    generated: dict[str, list[Path]],
+    generated: Sequence[Path],
     start: int,
     end: int | None,
-    excluded_task_ids: set[int] | None = None,
-) -> list[tuple[str, Path]]:
-    """Exclude task IDs, then apply the same half-open range to each domain."""
-    excluded_task_ids = excluded_task_ids or set()
-    selected: list[tuple[str, Path]] = []
-    for domain, paths in generated.items():
-        paths = [path for path in paths if int(path.stem) not in excluded_task_ids]
-        upper = len(paths) if end is None else min(end, len(paths))
-        selected.extend((domain, path) for path in paths[start:upper])
-    return selected
+) -> list[Path]:
+    """Shopping config 목록에 반열린 실행 범위를 적용한다."""
+    upper = len(generated) if end is None else min(end, len(generated))
+    return list(generated[start:upper])
 
 
-def validate_selection(selected: Sequence[tuple[str, Path]]) -> dict[str, int]:
+def validate_selection(selected: Sequence[Path]) -> dict[str, int]:
     """Fail before browser/API use when task contracts or reference files are invalid."""
     if not selected:
-        raise ValueError("No tasks were selected; check --domain/--start/--end")
+        raise ValueError("No tasks were selected; check --start/--end")
     counts = {"tasks": len(selected), "reference_images": 0, "requires_reset": 0}
     required = {"task_id", "intent", "start_url", "eval"}
-    for domain, path in selected:
+    for path in selected:
         task = json.loads(path.read_text(encoding="utf-8"))
         missing = required - task.keys()
         if missing:
-            raise ValueError(f"{domain}/{path.name} is missing {sorted(missing)}")
+            raise ValueError(f"{path.name} is missing {sorted(missing)}")
         eval_types = set(task["eval"].get("eval_types", []))
         unsupported = eval_types - SUPPORTED_EVAL_TYPES
         if unsupported:
-            raise ValueError(f"{domain}/{path.name}: unsupported eval types {unsupported}")
+            raise ValueError(f"{path.name}: unsupported eval types {unsupported}")
         if task.get("require_reset"):
             counts["requires_reset"] += 1
         image_paths = _image_paths(task.get("image"))

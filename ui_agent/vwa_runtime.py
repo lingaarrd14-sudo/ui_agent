@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import types
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -167,16 +166,14 @@ def load_vwa_bindings(vwa_root: Path) -> VWABindings:
 
 def ensure_auth(
     auth_dir: Path,
-    domains: Iterable[str],
     refresh: bool,
     renew_comb: Any,
 ) -> None:
-    """Create VWA login storage only when absent or explicitly refreshed."""
+    """Shopping 로그인 상태를 없거나 명시적으로 갱신할 때 만든다."""
     auth_dir.mkdir(parents=True, exist_ok=True)
-    for domain in domains:
-        state_path = auth_dir / f"{domain}_state.json"
-        if refresh or not state_path.exists():
-            print(f"[auth] logging into {domain}", flush=True)
-            renew_comb([domain], auth_folder=str(auth_dir))
-        if not state_path.is_file():
-            raise RuntimeError(f"Authentication state was not created: {state_path}")
+    state_path = auth_dir / "shopping_state.json"
+    if refresh or not state_path.exists():
+        print("[auth] logging into shopping", flush=True)
+        renew_comb(["shopping"], auth_folder=str(auth_dir))
+    if not state_path.is_file():
+        raise RuntimeError(f"Authentication state was not created: {state_path}")
