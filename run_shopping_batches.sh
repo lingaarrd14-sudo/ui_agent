@@ -7,7 +7,7 @@ MODEL="${MODEL:-gemini-3.8-flash}"
 BATCH_SIZE="${BATCH_SIZE:-50}"
 MAX_STEPS="${MAX_STEPS:-30}"
 VIEWPORT_WIDTH="${VIEWPORT_WIDTH:-1280}"
-VIEWPORT_HEIGHT="${VIEWPORT_HEIGHT:-720}"
+VIEWPORT_HEIGHT="${VIEWPORT_HEIGHT:-2048}"
 SKIP_TASK_IDS=(284 319 345) # Shopping tasks that open Wikipedia.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,17 +32,24 @@ print(sum(
 ))
 PY
 )"
+START_INDEX="${START_INDEX:-0}"
+END_INDEX="${END_INDEX:-$TASK_COUNT}"
+
+if ((START_INDEX < 0 || END_INDEX < START_INDEX || END_INDEX > TASK_COUNT)); then
+    echo "Invalid task range: START_INDEX=$START_INDEX END_INDEX=$END_INDEX (valid: 0..$TASK_COUNT)" >&2
+    exit 1
+fi
 
 mkdir -p "$RESULT_ROOT"
-echo "Running $TASK_COUNT shopping tasks in batches of $BATCH_SIZE."
+echo "Running shopping tasks [$START_INDEX, $END_INDEX) in batches of $BATCH_SIZE."
 echo "Skipping task IDs: ${SKIP_TASK_IDS[*]}"
 echo "Results: $RESULT_ROOT"
 
 # 3. 배치마다 설정 검증 → 초기화 → 실행
 exit_status=0
-for ((start = 0; start < TASK_COUNT; start += BATCH_SIZE)); do
+for ((start = START_INDEX; start < END_INDEX; start += BATCH_SIZE)); do
     end=$((start + BATCH_SIZE))
-    if ((end > TASK_COUNT)); then end="$TASK_COUNT"; fi
+    if ((end > END_INDEX)); then end="$END_INDEX"; fi
     batch_dir="$RESULT_ROOT/batch_${start}_${end}"
 
     batch_command=(

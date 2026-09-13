@@ -68,6 +68,25 @@ class GeminiPolicyTests(unittest.TestCase):
             [part["image_url"]["url"] for part in content if part["type"] == "image_url"],
             [f"data:image/png;base64,{name}" for name in ("previous", "current", "reference")],
         )
+        self.assertTrue(
+            all("detail" not in part["image_url"] for part in content if part["type"] == "image_url")
+        )
+
+    def test_gpt_and_gemini_use_identical_chat_payloads(self):
+        previous = self.observation.model_copy(update={"screenshot_base64": "previous"})
+        history = [StepRecord(**self.decision.model_dump(), result=ExecutionResult(ok=True))]
+        bodies = []
+        for model in ("gpt-5.6-luna", "gemini-3.8-flash"):
+            self.requests.clear()
+            OpenAIVisionPolicy(self.client, model).decide(
+                "Click the button", self.observation, history, ["reference"], previous,
+            )
+            self.assertEqual(self.requests[0].url.path, "/v1/chat/completions")
+            body = json.loads(self.requests[0].content)
+            self.assertEqual(body.pop("model"), model)
+            bodies.append(body)
+
+        self.assertEqual(bodies[0], bodies[1])
 
     def test_empty_refused_and_invalid_responses_are_rejected(self):
         self.choices[0]["message"] = {"role": "assistant", "content": None, "refusal": "Refused"}

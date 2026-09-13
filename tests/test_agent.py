@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import unittest
+from types import SimpleNamespace
 
 from PIL import Image
 from pydantic import ValidationError
@@ -68,19 +69,20 @@ class SequencePolicy:
         )
 
 
-class FakeResponses:
+class FakeChatCompletions:
     def __init__(self, decision):
         self.decision = decision
         self.request = None
 
     def parse(self, **kwargs):
         self.request = kwargs
-        return type("Response", (), {"output_parsed": self.decision})()
+        message = SimpleNamespace(parsed=self.decision)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
 class FakeOpenAIClient:
     def __init__(self, decision):
-        self.responses = FakeResponses(decision)
+        self.chat = SimpleNamespace(completions=FakeChatCompletions(decision))
 
 
 class AgentTests(unittest.TestCase):
@@ -152,11 +154,13 @@ class AgentTests(unittest.TestCase):
                 self.assertEqual(decision, expected)
                 controller.record(decision, ExecutionResult(ok=True))
                 controller.propose("goal", current)
-                request = client.responses.request
-                self.assertEqual(request["instructions"], INSTRUCTIONS)
-                self.assertIn("integer coordinates normalized to 0-1000", request["instructions"])
-                self.assertIs(request["text_format"], Decision)
-                prompt = request["input"][0]["content"][0]["text"]
+                request = client.chat.completions.request
+                self.assertEqual(request["messages"][0], {
+                    "role": "system", "content": INSTRUCTIONS,
+                })
+                self.assertIn("integer coordinates normalized to 0-1000", INSTRUCTIONS)
+                self.assertIs(request["response_format"], Decision)
+                prompt = request["messages"][1]["content"][0]["text"]
                 recent = json.loads(prompt.split("Recent executed actions: ", 1)[1])
                 self.assertEqual(recent[0]["action"], action.model_dump())
 
@@ -281,9 +285,11 @@ class AgentTests(unittest.TestCase):
             ),
         )
 
-        content = client.responses.request["input"][0]["content"]
+        content = client.chat.completions.request["messages"][1]["content"]
         image_urls = [
-            item["image_url"] for item in content if item["type"] == "input_image"
+            item["image_url"]["url"]
+            for item in content
+            if item["type"] == "image_url"
         ]
         self.assertEqual(
             image_urls,
@@ -298,6 +304,7 @@ class AgentTests(unittest.TestCase):
         self.assertIn("Recent executed actions:", content[0]["text"])
         self.assertNotIn("Current URL", content[0]["text"])
         self.assertNotIn("Open tabs", content[0]["text"])
+        self.assertTrue(all("detail" not in item.get("image_url", {}) for item in content))
 
 
 if __name__ == "__main__":

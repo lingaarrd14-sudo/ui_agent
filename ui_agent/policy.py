@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Sequence
+from typing import Any
 
 from openai import OpenAI
 
@@ -22,8 +23,11 @@ Type appends text to the focused field without clearing it or pressing Enter. Cl
 first; focus may not visibly change the screenshot. After typing, verify the text appeared in
 the intended field. If it did not, refocus before retrying. Hover only on controls that reveal
 menus or tooltips. Use press with Playwright keys for page controls: Enter confirms a selection
-or submits; Escape dismisses a visible menu or dialog. Use go_back/go_forward for history and
-scroll up/down for page scrolling. Do not use browser-chrome shortcuts such as Ctrl+F.
+or submits; Escape dismisses a visible menu or dialog. Return exactly one action that strictly
+matches the provided JSON schema. Set action.kind and its corresponding fields as follows:
+click(x, y), hover(x, y), type(text), press(key_comb), scroll(direction), go_back, go_forward,
+or stop(status, answer). Use go_back/go_forward for history and scroll up/down for page scrolling.
+Do not use browser-chrome shortcuts such as Ctrl+F.
 
 Check the previous action's expected_outcome against the current screenshot, using the previous
 screenshot when available. result.ok means command accepted, not task progress. If an expected
@@ -62,32 +66,16 @@ class OpenAIVisionPolicy:
             reference_images,
             previous_observation,
         )
-        if self.model.startswith("gemini-"):
-            # Gemini 호환 API는 Chat Completions의 content 형식을 사용한다.
-            chat_content = [
-                {"type": "text", "text": part["text"]}
-                if part["type"] == "input_text"
-                else {"type": "image_url", "image_url": {"url": part["image_url"]}}
-                for part in content
-            ]
-            response = self.client.chat.completions.parse(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.instructions},
-                    {"role": "user", "content": chat_content},
-                ],
-                response_format=Decision,
-            )
-            decision = response.choices[0].message.parsed if response.choices else None
-        else:
-            response = self.client.responses.parse(
-                model=self.model,
-                instructions=self.instructions,
-                input=[{"role": "user", "content": content}],
-                # 자유 형식 텍스트 대신 Decision 스키마를 강제한다.
-                text_format=Decision,
-            )
-            decision = response.output_parsed
+        # GPT와 Gemini에 동일한 Chat Completions 메시지와 출력 스키마를 보낸다.
+        response = self.client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.instructions},
+                {"role": "user", "content": content},
+            ],
+            response_format=Decision,
+        )
+        decision = response.choices[0].message.parsed if response.choices else None
         if decision is None:
             # 파싱 실패 상태를 실행 가능한 액션으로 취급하지 않는다.
             raise RuntimeError("모델이 유효한 액션을 반환하지 않았습니다.")
@@ -116,11 +104,11 @@ class OpenAIVisionPolicy:
         history: Sequence[StepRecord],
         reference_images: Sequence[str],
         previous_observation: Observation | None = None,
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         """직전·현재 화면과 선택적 reference image를 API content로 조립한다."""
         content = [
             {
-                "type": "input_text",
+                "type": "text",
                 "text": cls._build_prompt(task, observation, history),
             }
         ]
@@ -128,36 +116,41 @@ class OpenAIVisionPolicy:
             content.extend(
                 [
                     {
-                        "type": "input_text",
+                        "type": "text",
                         "text": "Previous screenshot, before the most recent executed action:",
                     },
                     {
-                        "type": "input_image",
-                        "image_url": (
-                            "data:image/png;base64,"
-                            f"{previous_observation.screenshot_base64}"
-                        ),
-                        "detail": "high",
+                        "type": "image_url",
+                        "image_url": {
+                            "url": (
+                                "data:image/png;base64,"
+                                f"{previous_observation.screenshot_base64}"
+                            )
+                        },
                     },
                 ]
             )
         content.extend(
             [
                 {
-                    "type": "input_text",
+                    "type": "text",
                     "text": "Current screenshot:",
                 },
                 {
-                    "type": "input_image",
-                    "image_url": f"data:image/png;base64,{observation.screenshot_base64}",
-                    "detail": "high",
+                    "type": "image_url",
+                    "image_url": {
+                        "url": (
+                            "data:image/png;base64,"
+                            f"{observation.screenshot_base64}"
+                        )
+                    },
                 },
             ]
         )
         if reference_images:
             content.append(
                 {
-                    "type": "input_text",
+                    "type": "text",
                     "text": (
                         "The images below are task reference images, not browser "
                         "screenshots. Use them only to identify what the goal refers to."
@@ -166,9 +159,8 @@ class OpenAIVisionPolicy:
             )
             content.extend(
                 {
-                    "type": "input_image",
-                    "image_url": f"data:image/png;base64,{image}",
-                    "detail": "high",
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image}"},
                 }
                 for image in reference_images
             )

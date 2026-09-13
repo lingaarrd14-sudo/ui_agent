@@ -97,11 +97,13 @@ MODEL=gpt-5.6-terra
 `OPENAI_BASE_URL`을 설정하세요. OpenAI 에이전트와 VWA LLM judge가 이 값을 사용합니다.
 
 Gemini는 `.env`에 `GEMINI_API_KEY`를 설정하고 `--model gemini-3.8-flash`로
-선택합니다. `gemini-` 모델은 Google의 Chat Completions 호환 API를 사용하며,
-GPT와 Gemini 모두 click·hover에 0~1000 정수 좌표를 반환하며, 실행 이력에도 같은 단위를
-사용합니다. 화면 중심은 항상 `(500, 500)`이고, VWA에 전달할 때만 1000으로 나누어
-0~1로 변환합니다. 끝점 1000은 화면 밖을 클릭하지 않도록 마지막 픽셀로 제한합니다.
-VWA 평가용 `OPENAI_API_KEY`도 필요합니다.
+선택합니다. GPT와 Gemini 에이전트 모두 같은 Chat Completions 메시지, 이미지 입력,
+structured output 스키마를 사용합니다. 이미지에는 제공자별 `detail` 힌트를 지정하지
+않고 동일한 PNG 데이터를 전달합니다. Gemini 요청만 Google의 OpenAI 호환 endpoint로
+보냅니다. 두 모델 모두 click·hover에 0~1000 정수 좌표를 반환하며, 실행 이력에도 같은
+단위를 사용합니다. 화면 중심은 항상 `(500, 500)`이고, VWA에 전달할 때만 1000으로
+나누어 0~1로 변환합니다. 끝점 1000은 화면 밖을 클릭하지 않도록 마지막 픽셀로
+제한합니다. VWA 평가용 `OPENAI_API_KEY`도 필요합니다.
 배치는 `MODEL=gemini-3.8-flash bash run_shopping_batches.sh`로 실행합니다.
 
 Shopping 주소 기본값은 `SHOPPING=http://localhost:7770`입니다. 필요하면 같은 이름의

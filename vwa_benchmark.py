@@ -110,6 +110,8 @@ def build_run_metadata(
         "uses_agent_captioning": False,
         "model": args.model,
         "api_base_url": base_url or "OpenAI SDK default",
+        "model_api": "chat_completions",
+        "image_detail": "unspecified",
         "policy_instructions": INSTRUCTIONS,
         "max_steps": args.max_steps,
         "repeating_action_failure_th": args.repeating_action_failure_th,
